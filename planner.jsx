@@ -1,0 +1,1254 @@
+const { useState, useEffect, useMemo, Fragment } = React;
+const XLSX_NPM = window.XLSX;
+
+if (typeof window !== "undefined" && !window.storage) {
+  var storagePrefix = "pointsbet-mi-planner:";
+  window.storage = {
+    get: async function (key) {
+      var value = window.localStorage.getItem(storagePrefix + key);
+      return value === null ? null : { value: value };
+    },
+    set: async function (key, value) {
+      window.localStorage.setItem(storagePrefix + key, String(value));
+    },
+    delete: async function (key) {
+      window.localStorage.removeItem(storagePrefix + key);
+    },
+  };
+}
+
+function localISO(d){ var y=d.getFullYear(),m=('0'+(d.getMonth()+1)).slice(-2),dd=('0'+d.getDate()).slice(-2); return y+'-'+m+'-'+dd; }
+const TODAY = localISO(new Date());
+function currentWeekSunday(){ var d=new Date(); d.setDate(d.getDate()-d.getDay()); return localISO(d); }
+const SV = "5";
+const fmt = s => s ? s.split('-').reverse().join('/') : '—';
+const fmtShort = s => s ? s.split('-').reverse().join('/').slice(0,5) : '';
+const CATS = ["AFL","NRL","NBA","MLB","Racing","Foxcatcher/StatMate","World Cup","Other"];
+const CAT_ORDER = ["NRL","AFL","NBA","MLB","Racing","Foxcatcher/StatMate","World Cup","Other"];
+const CAT_COL = {NRL:'#dc2626',AFL:'#2563eb',NBA:'#7c3aed',MLB:'#0891b2',Racing:'#059669','Foxcatcher/StatMate':'#d97706','World Cup':'#0369a1',Other:'#6b7280'};
+const PLATFORMS = [{k:'tv',label:'📺 TV'},{k:'radio',label:'📻 Radio'}];
+const NETS = [
+  {k:'fox',     label:'Fox Footy',   platform:'tv',    geo:'National'},
+  {k:'espn',    label:'ESPN/Disney', platform:'tv',    geo:'National'},
+  {k:'rdc',     label:'RDC',         platform:'tv',    geo:'National', customMI:true},
+  {k:'nine',    label:'Nine Radio',  platform:'radio', geo:'NSW + QLD'},
+  {k:'sen',     label:'SEN Radio',   platform:'radio', geo:'VIC / SA / TAS'},
+  {k:'triplem', label:'Triple M',    platform:'radio', geo:'Sydney metro'},
+];
+const ALL_NET_KEYS = NETS.map(function(n){return n.k;});
+const BLANK_NETS = (function(){ var o={}; ALL_NET_KEYS.forEach(function(k){o[k]=false;}); return o; })();
+const BLANK = {keyNumber:'',title:'',dur:'30',cat:'AFL',air:'',end:'',nets:{...BLANK_NETS}};
+const DAYS = ['sun','mon','tue','wed','thu','fri','sat'];
+const DAY_L = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+const RDC_DAYPARTS = [
+  {k:'morning',       label:'Morning Programming',      time:'8am-11am AEST/AEDT',                              booked:function(){return '2.5 minutes';}},
+  {k:'liveRaceday',   label:'Live Raceday Broadcast',   time:'11am - 6:00pm AEST/AEDT',                        booked:function(d){return d==='sat'?'2 minutes':'2.5 minutes';}},
+  {k:'liveRacenight', label:'Live Racenight Broadcast', time:'Start of Live racenight \u2013 until the conclusion', booked:function(){return '1min';}, daysOnly:['thu','fri']},
+  {k:'evening',       label:'Evening Programing',       time:'6:00pm - 11:00pm AEST/AEDT',                     booked:function(){return '2.5 minutes';}},
+  {k:'lateNight',     label:'Late Night Programming',   time:'11pm - 8am : RG Advertising',                    booked:function(){return 'BONUS';}},
+];
+const RDC_DP_COL = {morning:'#1e3a5f',liveRaceday:'#0f5132',liveRacenight:'#4a1a6e',evening:'#7c2d12',lateNight:'#374151'};
+
+function ordinal(n){ var s=['th','st','nd','rd'],v=n%100; return n+(s[(v-20)%10]||s[v]||s[0]); }
+var FULL_DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+var MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+function fmtRDC(ds){ if(!ds) return ''; var d=new Date(ds+'T00:00:00'); return FULL_DAYS[d.getDay()]+' '+ordinal(d.getDate())+' '+MONTH_NAMES[d.getMonth()]+' '+d.getFullYear(); }
+function getDueDate(wcStr,di){ var d=new Date(wcStr+'T00:00:00'); d.setDate(d.getDate()+(di<=2?-4:-2)); return d.toISOString().split('T')[0]; }
+function stripDur(t){ return t?t.replace(/\s*:?\d+s?\s*$/,'').trim():''; }
+function getXLSX(){ return (typeof window!=='undefined'&&window.__xlsxStyleLoaded&&window.XLSX)?window.XLSX:XLSX_NPM; }
+// Parse booked labels ("2.5 minutes","1min","30 seconds") to total seconds; null for non-numeric (BONUS)
+function parseBooked(label){ if(!label) return null; var s=String(label).toLowerCase(); if(s.indexOf('bonus')>=0) return null; var m=s.match(/([\d.]+)\s*min/); if(m) return Math.round(parseFloat(m[1])*60); var sec=s.match(/([\d.]+)\s*sec/); if(sec) return Math.round(parseFloat(sec[1])); var n=s.match(/([\d.]+)/); return n?Math.round(parseFloat(n[1])):null; }
+function fmtSecs(sec){ if(sec==null) return ''; if(sec<60) return sec+'s'; var m=sec/60; return (m===Math.floor(m)?m:m.toFixed(1).replace(/\.0$/,''))+'min'+(sec%60?' '+(sec%60)+'s':''); }
+function spotDur(spot,creatives){ for(var i=0;i<creatives.length;i++){ if(creatives[i].keyNumber===spot.k) return parseInt(creatives[i].dur)||0; } return 0; }
+function spotQty(spot){ var q=parseInt(spot.q); return q>0?q:(spot.k?1:0); }
+function dpTotalSecs(spots,creatives){ if(!spots) return 0; return spots.reduce(function(s,sp){ return s+spotQty(sp)*spotDur(sp,creatives); },0); }
+function initRdcWeek(){ var w={}; DAYS.forEach(function(day){ w[day]={}; RDC_DAYPARTS.forEach(function(dp){ if(dp.daysOnly&&!dp.daysOnly.includes(day)) return; w[day][dp.k]=dp.k==='lateNight'?[{k:'FXC26BRPA30',q:'1',i:'',t:'Follow Foxcatcher'}]:[]; }); }); return w; }
+
+const getWeekDates = function(wc){ try{ return DAYS.map(function(_,i){ var d=new Date(wc); d.setDate(d.getDate()+i); return d.toISOString().split('T')[0]; }); }catch(e){ return DAYS.map(function(){return '';}); } };
+const dayEnabled = function(c,date){ if(!date) return false; return (c.air||'0000-00-00')<=date&&date<=(c.end||'9999-12-31'); };
+const clamp = function(v){ return v===''?'':String(Math.max(0,Math.min(100,parseInt(v)||0))); };
+function weeklyState(nr,em){ if(!nr||!em) return {val:'',mix:false}; var en=DAYS.filter(function(d){return em[d];}); if(!en.length) return {val:'',mix:false}; var vals=en.map(function(d){return nr[d]||'';}).filter(function(v){return v!=='';}); if(!vals.length) return {val:'',mix:false}; var f=vals[0]; if(vals.length===en.length&&vals.every(function(v){return v===f;})) return {val:f,mix:false}; return {val:'',mix:true}; }
+function cStatus(c){ if(!c) return 'active'; if(c.end&&c.end<TODAY) return 'expired'; if(c.air&&c.air>TODAY) return 'upcoming'; if(c.end&&(new Date(c.end)-new Date(TODAY))/864e5<=7) return 'expiring'; return 'active'; }
+var ST={expired:{bg:'#f3f4f6',tx:'#9ca3af',badge:'Expired'},upcoming:{bg:'#dbeafe',tx:'#1e40af',badge:'Not yet live'},expiring:{bg:'#fef3c7',tx:'#92400e',badge:'Expiring soon'},active:{bg:'#fff',tx:'#111827',badge:null}};
+var TH={padding:'6px 8px',textAlign:'left',fontSize:11,fontWeight:700,color:'#374151',borderBottom:'1px solid #e5e7eb',whiteSpace:'nowrap',backgroundColor:'#f9fafb'};
+var TD={padding:'6px 8px',fontSize:12,verticalAlign:'middle'};
+function totStyle(v){ if(v===100) return {co:'#166534',bg:'#dcfce7',bo:'#86efac'}; if(v>0) return {co:'#991b1b',bg:'#fee2e2',bo:'#fca5a5'}; return {co:'#9ca3af',bg:'#f9fafb',bo:'#e5e7eb'}; }
+function CatBadge(props){ return <span style={{fontSize:10,padding:'1px 6px',borderRadius:8,backgroundColor:CAT_COL[props.cat]+'22',color:CAT_COL[props.cat],fontWeight:700,border:'1px solid '+CAT_COL[props.cat]+'44'}}>{props.cat}</span>; }
+
+const DEFAULT_EMAILS = {
+  fox:     {to:'Fiorella.Alvarez@foxtel.com.au', cc:'Caterina.Imbro@foxtel.com.au,FoxtelMediaTraffic@foxtel.com.au', subject:'PointsBet \u2014 Fox Footy Material Instructions WC [WC_DATE]',  body:'Hi Fiorella,\n\nPlease find attached the Material Instructions for the week commencing [WC_DATE].\n\nRegards'},
+  espn:    {to:'Krista.Jenkins@disney.com', cc:'Peter.X.Pavlakis@disney.com', subject:'PointsBet \u2014 ESPN/Disney Material Instructions WC [WC_DATE]', body:'Hi Krista,\n\nPlease find attached the Material Instructions for the week commencing [WC_DATE].\n\nRegards'},
+  rdc:     {to:'LBateman@racing.com', cc:'SMiller@racing.com', subject:'PointsBet \u2014 RDC Material Instructions WC [WC_DATE]', body:'Hi Lucy,\n\nPlease find attached the Material Instructions for the week commencing [WC_DATE].\n\nSome material will need to be fed through over the coming days.\n\nRegards'},
+  nine:    {to:'', cc:'', subject:'PointsBet \u2014 Nine Radio Material Instructions WC [WC_DATE]',  body:'Hi,\n\nPlease find attached the Material Instructions for the week commencing [WC_DATE].\n\nRegards'},
+  sen:     {to:'sophie.healy@sen.com.au,darcy.kennelly@sen.com.au', cc:'', subject:'PointsBet \u2014 SEN Radio Material Instructions WC [WC_DATE]', body:'Hi Sophie and Darcy,\n\nPlease find attached the Material Instructions for the week commencing [WC_DATE].\n\nRegards'},
+  triplem: {to:'stella.dakin@sca.com.au,samantha.valk@sca.com.au', cc:'', subject:'PointsBet \u2014 Triple M Material Instructions WC [WC_DATE]', body:'Hi Stella and Sam,\n\nPlease find attached the Material Instructions for the week commencing [WC_DATE].\n\nRegards'},
+};
+
+const DEFAULTS = [
+  {id:1,  keyNumber:"PB26NS1FN30C1", title:"NRL Origin G1 - First Try NSW :30",              dur:"30",cat:"NRL",                air:"",          end:"2026-05-27",nets:{fox:true, espn:true, rdc:true, nine:false,sen:false,triplem:false}},
+  {id:2,  keyNumber:"PB26NS1FN15C1", title:"NRL Origin G1 - First Try NSW :15",              dur:"15",cat:"NRL",                air:"",          end:"2026-05-27",nets:{fox:true, espn:true, rdc:false,nine:false,sen:false,triplem:false}},
+  {id:3,  keyNumber:"PB26NS1FQ30C1", title:"NRL Origin G1 - First Try QLD :30",              dur:"30",cat:"NRL",                air:"",          end:"2026-05-27",nets:{fox:true, espn:true, rdc:true, nine:false,sen:false,triplem:false}},
+  {id:4,  keyNumber:"PB26NS1FQ15C1", title:"NRL Origin G1 - First Try QLD :15",              dur:"15",cat:"NRL",                air:"",          end:"2026-05-27",nets:{fox:true, espn:true, rdc:false,nine:false,sen:false,triplem:false}},
+  {id:5,  keyNumber:"PB26AP11R30C1", title:"AFL Pull Em R11 :30",                            dur:"30",cat:"AFL",                air:"",          end:"2026-05-25",nets:{fox:true, espn:true, rdc:true, nine:false,sen:false,triplem:false}},
+  {id:6,  keyNumber:"PB26AP11R15C1", title:"AFL Pull Em R11 :15",                            dur:"15",cat:"AFL",                air:"",          end:"2026-05-25",nets:{fox:true, espn:true, rdc:true, nine:false,sen:false,triplem:false}},
+  {id:7,  keyNumber:"PB26AP12R30C1", title:"AFL Pull Em R12 :30",                            dur:"30",cat:"AFL",                air:"2026-05-28",end:"2026-06-01",nets:{fox:true, espn:true, rdc:true, nine:false,sen:false,triplem:false}},
+  {id:8,  keyNumber:"PB26AP12R15C1", title:"AFL Pull Em R12 :15",                            dur:"15",cat:"AFL",                air:"2026-05-28",end:"2026-06-01",nets:{fox:true, espn:true, rdc:true, nine:false,sen:false,triplem:false}},
+  {id:27, keyNumber:"PB26AP13R30C1", title:"AFL Pull Em R13 :30",                            dur:"30",cat:"AFL",                air:"2026-05-31",end:"2026-06-07",nets:{fox:true, espn:true, rdc:true, nine:false,sen:false,triplem:false}},
+  {id:28, keyNumber:"PB26AP13R15C1", title:"AFL Pull Em R13 :15",                            dur:"15",cat:"AFL",                air:"2026-05-31",end:"2026-06-07",nets:{fox:true, espn:true, rdc:true, nine:false,sen:false,triplem:false}},
+  {id:9,  keyNumber:"PB25BNSAF30C3", title:"SHAQ-5 Boys Night StatMate AFL Finals 1 :30",    dur:"30",cat:"AFL",                air:"",          end:"",           nets:{fox:true, espn:true, rdc:true, nine:false,sen:false,triplem:false}},
+  {id:10, keyNumber:"PB25EKAFL30C3", title:"SHAQ-5 Esky Lock Screen AFL Nick Daicos :30",    dur:"30",cat:"AFL",                air:"",          end:"",           nets:{fox:true, espn:true, rdc:true, nine:false,sen:false,triplem:false}},
+  {id:11, keyNumber:"PB25EKAFG30C3", title:"SHAQ-5 Esky Lock Screen AFL Bailey Smith :30",   dur:"30",cat:"AFL",                air:"",          end:"",           nets:{fox:true, espn:true, rdc:true, nine:false,sen:false,triplem:false}},
+  {id:12, keyNumber:"PB26NBP3P30C1", title:"NBA Pull Em Playoffs R3 :30",                    dur:"30",cat:"NBA",                air:"",          end:"2026-06-02",nets:{fox:true, espn:true, rdc:true, nine:false,sen:false,triplem:false}},
+  {id:29, keyNumber:"PB26NBF1P30C1", title:"NBA Pull Em Finals 1 :30",                       dur:"30",cat:"NBA",                air:"2026-06-04",end:"2026-07-01",nets:{fox:true, espn:true, rdc:true, nine:false,sen:false,triplem:false}},
+  {id:13, keyNumber:"PB26FNB3P30C1", title:"SHAQ-5 Brand Fridge NBA Playoffs R3 :30",        dur:"30",cat:"NBA",                air:"",          end:"",           nets:{fox:true, espn:true, rdc:false,nine:false,sen:false,triplem:false}},
+  {id:30, keyNumber:"PB26SNB1F30C1", title:"Shopping 5 for $25 NBA Finals 1 :30",            dur:"30",cat:"NBA",                air:"2026-06-04",end:"2026-07-01",nets:{fox:true, espn:true, rdc:false,nine:false,sen:false,triplem:false}},
+  {id:14, keyNumber:"PB26SNB3P30C1", title:"Shopping 5 for $25 NBA Playoffs R3 :30",         dur:"30",cat:"NBA",                air:"",          end:"",           nets:{fox:true, espn:true, rdc:false,nine:false,sen:false,triplem:false}},
+  {id:15, keyNumber:"PB26BNB3P30C1", title:"SHAQ-5 Boys Night StatMate NBA Playoffs R3 :30", dur:"30",cat:"NBA",                air:"",          end:"",           nets:{fox:true, espn:true, rdc:false,nine:false,sen:false,triplem:false}},
+  {id:31, keyNumber:"PB26BNB1F30C1", title:"SHAQ-5 Boys Night StatMate NBA Finals 1 :30",    dur:"30",cat:"NBA",                air:"2026-06-04",end:"2026-07-01",nets:{fox:true, espn:true, rdc:false,nine:false,sen:false,triplem:false}},
+  {id:16, keyNumber:"PB26ENB3P30C1", title:"SHAQ-5 Esky Lock Screen NBA Playoffs R3 :30",    dur:"30",cat:"NBA",                air:"",          end:"",           nets:{fox:true, espn:true, rdc:false,nine:false,sen:false,triplem:false}},
+  {id:32, keyNumber:"PB26ENB1F30C1", title:"SHAQ-5 Esky Lock Screen NBA Finals 1 :30",       dur:"30",cat:"NBA",                air:"2026-06-04",end:"2026-07-01",nets:{fox:true, espn:true, rdc:false,nine:false,sen:false,triplem:false}},
+  {id:17, keyNumber:"PB25NBAMP15C4", title:"NBA More Points Prop Lines Promo :15",           dur:"15",cat:"NBA",                air:"",          end:"",           nets:{fox:true, espn:true, rdc:false,nine:false,sen:false,triplem:false}},
+  {id:33, keyNumber:"PB26FRMLB30C5", title:"Fridge MLB 2026 :30",                            dur:"30",cat:"MLB",                air:"",          end:"",           nets:{fox:true, espn:true, rdc:false,nine:false,sen:false,triplem:false}},
+  {id:34, keyNumber:"PB26EKMLB30C5", title:"Esky Lock Screen MLB 2026 :30",                  dur:"30",cat:"MLB",                air:"",          end:"",           nets:{fox:true, espn:true, rdc:false,nine:false,sen:false,triplem:false}},
+  {id:18, keyNumber:"PB25FRRA30C4",  title:"SHAQ-5 Brand Fridge Racing :30",                 dur:"30",cat:"Racing",             air:"",          end:"",           nets:{fox:false,espn:false,rdc:true, nine:false,sen:false,triplem:false}},
+  {id:19, keyNumber:"PB25SDBMB30C4", title:"Beast Mode Generic Brand :30",                   dur:"30",cat:"Racing",             air:"",          end:"",           nets:{fox:false,espn:false,rdc:true, nine:false,sen:false,triplem:false}},
+  {id:20, keyNumber:"PB25SHRCB30C4", title:"Racing 5for25 Shopping :30",                     dur:"30",cat:"Racing",             air:"",          end:"",           nets:{fox:false,espn:false,rdc:true, nine:false,sen:false,triplem:false}},
+  {id:21, keyNumber:"PB25REXM15C3",  title:"Racing Exclusive Markets :15",                   dur:"15",cat:"Racing",             air:"",          end:"",           nets:{fox:false,espn:false,rdc:true, nine:false,sen:false,triplem:false}},
+  {id:22, keyNumber:"PB26RCBMS15C1", title:"RDC Beast Mode 27/05 (Today) :15",               dur:"15",cat:"Racing",             air:"2026-05-27",end:"2026-05-27",nets:{fox:false,espn:false,rdc:true, nine:false,sen:false,triplem:false}},
+  {id:23, keyNumber:"PB26RCBMT15C1", title:"RDC Beast Mode 27/05 (ON NOW) :15",              dur:"15",cat:"Racing",             air:"2026-05-27",end:"2026-05-27",nets:{fox:false,espn:false,rdc:true, nine:false,sen:false,triplem:false}},
+  {id:24, keyNumber:"FXC26BRPA30",   title:"Follow Foxcatcher :30",                          dur:"30",cat:"Foxcatcher/StatMate",air:"",          end:"",           nets:{fox:true, espn:true, rdc:true, nine:false,sen:false,triplem:false}},
+  {id:25, keyNumber:"SM26AFLN30A",   title:"StatMate AFL 2026 Update :30",                   dur:"30",cat:"Foxcatcher/StatMate",air:"",          end:"",           nets:{fox:true, espn:true, rdc:true, nine:false,sen:false,triplem:false}},
+  {id:26, keyNumber:"SM26NRLN30A",   title:"StatMate NRL 2026 Update :30",                   dur:"30",cat:"Foxcatcher/StatMate",air:"",          end:"",           nets:{fox:true, espn:true, rdc:true, nine:false,sen:false,triplem:false}},
+  {id:35, keyNumber:"PBET0226-15-2-JZ", title:"Pull 'Em :15",                               dur:"15",cat:"Other",              air:"2026-03-12",end:"2026-05-06",nets:{fox:false,espn:false,rdc:false,nine:false,sen:true, triplem:false}},
+  {id:36, keyNumber:"PBET0525-15-1-JZ", title:"5 for 25 :15",                               dur:"15",cat:"Other",              air:"2026-05-07",end:"",           nets:{fox:false,espn:false,rdc:false,nine:false,sen:true, triplem:false}},
+  {id:37, keyNumber:"PB20052026",       title:"Triple M Commercial :30",                     dur:"30",cat:"Other",              air:"2026-05-21",end:"2026-05-26",nets:{fox:false,espn:false,rdc:false,nine:false,sen:false,triplem:true}},
+  {id:38, keyNumber:"3PBE120226D",      title:"Triple M Live Read :30",                      dur:"30",cat:"Other",              air:"2026-02-27",end:"",           nets:{fox:false,espn:false,rdc:false,nine:false,sen:false,triplem:true}},
+  {id:39, keyNumber:"PB190526B",        title:"State of Origin Promo B :30",                 dur:"30",cat:"NRL",                air:"2026-05-19",end:"2026-05-27",nets:{fox:false,espn:false,rdc:false,nine:true, sen:false,triplem:false}},
+  {id:40, keyNumber:"PB190526A",        title:"State of Origin Promo A :30",                 dur:"30",cat:"NRL",                air:"2026-05-19",end:"2026-05-27",nets:{fox:false,espn:false,rdc:false,nine:true, sen:false,triplem:false}},
+  {id:41, keyNumber:"PB190526L1",       title:"State of Origin Live Read :45",               dur:"45",cat:"NRL",                air:"2026-05-19",end:"2026-05-27",nets:{fox:false,espn:false,rdc:false,nine:true, sen:false,triplem:false}},
+  {id:42, keyNumber:"3PBE300326A",      title:"Nine Radio Generic Commercial :30",           dur:"30",cat:"Other",              air:"2026-05-28",end:"2026-05-31",nets:{fox:false,espn:false,rdc:false,nine:true, sen:false,triplem:false}},
+  {id:43, keyNumber:"PB190226L2",       title:"Nine Radio Generic Live Read :45",            dur:"45",cat:"Other",              air:"2026-05-28",end:"2026-05-31",nets:{fox:false,espn:false,rdc:false,nine:true, sen:false,triplem:false}},
+  {id:44, keyNumber:"PB26WCPA30C1",    title:"W-CUP - Pull 'Em 1 :30",                      dur:"30",cat:"World Cup",          air:"2026-06-07",end:"2026-07-16",nets:{fox:true, espn:true, rdc:true, nine:false,sen:false,triplem:false}},
+  {id:45, keyNumber:"PB26WCPA15C1",    title:"W-CUP - Pull 'Em 1 :15",                      dur:"15",cat:"World Cup",          air:"2026-06-07",end:"2026-07-16",nets:{fox:true, espn:true, rdc:true, nine:false,sen:false,triplem:false}},
+  {id:46, keyNumber:"PB26AP14R30C1",   title:"AFL Pull Em R14 :30",                          dur:"30",cat:"AFL",                air:"2026-06-07",end:"2026-06-13",nets:{fox:true, espn:true, rdc:true, nine:false,sen:false,triplem:false}},
+  {id:47, keyNumber:"PB26AP14R15C1",   title:"AFL Pull Em R14 :15",                          dur:"15",cat:"AFL",                air:"2026-06-07",end:"2026-06-13",nets:{fox:true, espn:true, rdc:true, nine:false,sen:false,triplem:false}},
+];
+
+function PlatformBar(props) {
+  var platform=props.platform, setPlatform=props.setPlatform, platformNets=props.platformNets;
+  return (
+    <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:16,padding:'10px 14px',backgroundColor:'#f9fafb',borderRadius:8,border:'1px solid #e5e7eb'}}>
+      <span style={{fontSize:11,fontWeight:600,color:'#6b7280',marginRight:4}}>Platform:</span>
+      {PLATFORMS.map(function(p) {
+        return <button key={p.k} onClick={function(){setPlatform(p.k);}} style={{padding:'5px 18px',border:'none',borderRadius:20,cursor:'pointer',fontSize:13,fontWeight:platform===p.k?700:500,backgroundColor:platform===p.k?'#111827':'#fff',color:platform===p.k?'#fff':'#6b7280',boxShadow:platform===p.k?'none':'0 0 0 1px #e5e7eb'}}>{p.label}</button>;
+      })}
+      <span style={{marginLeft:8,fontSize:11,color:'#9ca3af'}}>{platformNets.map(function(n){return n.label+(n.geo?' ('+n.geo+')':'');}).join(' · ')}</span>
+    </div>
+  );
+}
+
+function NetToggle(props) {
+  var val=props.val, onChange=props.onChange, nets=props.nets;
+  return (
+    <div style={{display:'flex',border:'1px solid #d1d5db',borderRadius:6,overflow:'hidden'}}>
+      {nets.map(function(n) {
+        return <button key={n.k} onClick={function(){onChange(n.k);}} style={{padding:'5px 12px',border:'none',cursor:'pointer',fontSize:12,fontWeight:val===n.k?700:400,backgroundColor:val===n.k?'#1d4ed8':'#fff',color:val===n.k?'#fff':'#374151',borderRight:'1px solid #d1d5db'}}>{n.label}</button>;
+      })}
+    </div>
+  );
+}
+
+function CreativeRows(props) {
+  var c=props.c,weekDates=props.weekDates,planNet=props.planNet,activeNote=props.activeNote,setActiveNote=props.setActiveNote;
+  var getDR=props.getDR,setDR=props.setDR,setWeekly=props.setWeekly,getNote=props.getNote,setNote=props.setNote,hasAnyNote=props.hasAnyNote;
+  var ss=ST[cStatus(c)], em={};
+  DAYS.forEach(function(d,i){ em[d]=dayEnabled(c,weekDates[i]||''); });
+  var fnr={};
+  DAYS.forEach(function(d){ fnr[d]=getDR(c.id,planNet,d); });
+  var ws=weeklyState(fnr,em), noteOpen=activeNote===c.id, anyNote=hasAnyNote(c.id);
+  return (
+    <Fragment>
+      <tr style={{backgroundColor:ss.bg,borderBottom:noteOpen?'none':'1px solid #e5e7eb',color:ss.tx}}>
+        <td style={{...TD,fontFamily:'monospace',fontWeight:700,fontSize:10,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+          {c.keyNumber}
+          {ss.badge && <span style={{fontSize:8,marginLeft:3,padding:'1px 3px',borderRadius:5,backgroundColor:'rgba(0,0,0,0.08)'}}>{ss.badge}</span>}
+          {anyNote && <span style={{display:'inline-block',width:6,height:6,borderRadius:'50%',backgroundColor:'#f59e0b',marginLeft:4,verticalAlign:'middle'}}></span>}
+        </td>
+        <td style={{...TD,fontSize:11,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={c.title}>{c.title}</td>
+        <td style={{...TD,textAlign:'center',fontSize:11}}>:{c.dur}</td>
+        <td style={{...TD,fontSize:10}}>{c.air?fmt(c.air):'—'}</td>
+        <td style={{...TD,fontSize:10}}>{c.end?fmt(c.end):'Ongoing'}</td>
+        <td style={{...TD,padding:3,textAlign:'center',backgroundColor:'#f0f9ff'}}>
+          <input type="number" min={0} max={100} value={ws.mix?'':ws.val} onChange={function(e){setWeekly(c.id,planNet,e.target.value,em);}} style={{width:50,textAlign:'center',border:'1px solid #93c5fd',borderRadius:4,padding:'2px',fontSize:12,backgroundColor:'#fff'}} placeholder={ws.mix?'MIX':'%'}/>
+        </td>
+        {DAYS.map(function(day,i) {
+          var en=em[day], val=getDR(c.id,planNet,day), note=getNote(c.id,day);
+          return (
+            <td key={day} style={{...TD,padding:3,textAlign:'center',position:'relative',backgroundColor:en?'transparent':'#f4f4f5'}}>
+              {en ? (
+                <span style={{display:'block',position:'relative'}}>
+                  <input type="number" min={0} max={100} value={val} onChange={function(e){setDR(c.id,planNet,day,e.target.value);}} style={{width:42,textAlign:'center',border:'1px solid #d1d5db',borderRadius:4,padding:'2px',fontSize:12,backgroundColor:'#fff'}} placeholder="%"/>
+                  <span onClick={function(){setActiveNote(noteOpen?null:c.id);}} title={note||'Add note'} style={{position:'absolute',top:2,right:0,width:7,height:7,borderRadius:'50%',cursor:'pointer',display:'inline-block',backgroundColor:note?'#f59e0b':(val?'#e5e7eb':'transparent'),border:(val&&!note)?'1px solid #d1d5db':'none'}}></span>
+                </span>
+              ) : <span style={{color:'#d1d5db',fontSize:13}}>—</span>}
+            </td>
+          );
+        })}
+      </tr>
+      {noteOpen && (
+        <tr style={{backgroundColor:'#fffbeb',borderBottom:'1px solid #fde68a'}}>
+          <td colSpan={13} style={{padding:'8px 12px'}}>
+            <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+              <span style={{fontSize:11,fontWeight:700,color:'#92400e',whiteSpace:'nowrap',marginRight:4}}>📝 {c.keyNumber}:</span>
+              {DAYS.map(function(day,i) {
+                var en=dayEnabled(c,weekDates[i]||''), nv=getNote(c.id,day);
+                if(!en&&!nv) return null;
+                return (
+                  <div key={day} style={{display:'inline-flex',alignItems:'center',gap:3}}>
+                    <span style={{fontSize:10,fontWeight:600,color:en?'#92400e':'#9ca3af',whiteSpace:'nowrap'}}>{DAY_L[i]}:</span>
+                    <input type="text" value={nv} onChange={function(e){setNote(c.id,day,e.target.value);}} placeholder={en?'Add note…':''} disabled={!en} style={{width:150,border:'1px solid #fbbf24',borderRadius:4,padding:'2px 6px',fontSize:11,backgroundColor:en?'#fff':'#f9fafb',color:en?'#111':'#9ca3af'}}/>
+                  </div>
+                );
+              })}
+              <button onClick={function(){setActiveNote(null);}} style={{marginLeft:'auto',fontSize:11,color:'#92400e',background:'none',border:'1px solid #fbbf24',borderRadius:4,padding:'2px 10px',cursor:'pointer',fontWeight:700}}>Done</button>
+            </div>
+          </td>
+        </tr>
+      )}
+    </Fragment>
+  );
+}
+
+function PlannerRows(props) {
+  var grouped=props.grouped,weekDates=props.weekDates,rots=props.rots,notes=props.notes;
+  var planNet=props.planNet,activeNote=props.activeNote,setActiveNote=props.setActiveNote,setRots=props.setRots,setNotes=props.setNotes;
+  function getDR(id,net,day){ return rots[id]&&rots[id][net]?(rots[id][net][day]||''):''; }
+  function getNote(id,day){ return notes[id]?(notes[id][day]||''):''; }
+  function setDR(id,net,day,val){ var v=clamp(val); setRots(function(p){var r={...p};r[id]={...r[id]};r[id][net]={...(r[id][net]||{}),[day]:v};return r;}); }
+  function setWeekly(id,net,val,em){ var v=clamp(val);var cur=(rots[id]&&rots[id][net])||{};var upd={...cur};DAYS.forEach(function(d){if(em[d])upd[d]=v;});setRots(function(p){return{...p,[id]:{...p[id],[net]:upd}};}); }
+  function setNote(id,day,text){ setNotes(function(p){return{...p,[id]:{...(p[id]||{}),[day]:text}};}); }
+  function hasAnyNote(id){ return DAYS.some(function(d){return !!getNote(id,d);}); }
+  var cats=CAT_ORDER.filter(function(cat){return grouped[cat]&&grouped[cat].length;});
+  if(!cats.length) return null;
+  return (
+    <Fragment>
+      {cats.map(function(cat) {
+        return (
+          <Fragment key={cat}>
+            <tr><td colSpan={13} style={{padding:'5px 8px',backgroundColor:CAT_COL[cat]+'15',borderTop:'2px solid '+CAT_COL[cat]+'55'}}><span style={{fontSize:11,fontWeight:800,color:CAT_COL[cat],textTransform:'uppercase',letterSpacing:'0.06em'}}>{cat}</span></td></tr>
+            {grouped[cat].map(function(c) {
+              return <CreativeRows key={c.id} c={c} weekDates={weekDates} planNet={planNet} activeNote={activeNote} setActiveNote={setActiveNote} getDR={getDR} setDR={setDR} setWeekly={setWeekly} getNote={getNote} setNote={setNote} hasAnyNote={hasAnyNote}/>;
+            })}
+          </Fragment>
+        );
+      })}
+    </Fragment>
+  );
+}
+
+function RdcDaySection(props) {
+  var dp=props.dp, rdcDay=props.rdcDay, spots=props.spots, creatives=props.creatives, weekDates=props.weekDates;
+  var rdcCreatives=props.rdcCreatives, onAdd=props.onAdd, onRemove=props.onRemove, onKey=props.onKey, onField=props.onField;
+  var copySources=props.copySources, onCopyFrom=props.onCopyFrom;
+  var booked=dp.booked(rdcDay);
+  var colr=RDC_DP_COL[dp.k]||'#374151';
+  var bookedSecs=parseBooked(booked);
+  var usedSecs=dpTotalSecs(spots,creatives);
+  var tally=null;
+  if(bookedSecs!=null){
+    var st = usedSecs===bookedSecs?{bg:'#dcfce7',co:'#166534',ic:'✓'}:(usedSecs>bookedSecs?{bg:'#fee2e2',co:'#991b1b',ic:'⚠'}:{bg:'#fef9c3',co:'#854d0e',ic:''});
+    tally={st:st,text:fmtSecs(usedSecs)+' / '+fmtSecs(bookedSecs)};
+  }
+  return (
+    <div style={{marginBottom:20,border:'1px solid #e5e7eb',borderRadius:8,overflow:'hidden'}}>
+      <div style={{backgroundColor:colr,color:'#fff',padding:'8px 14px',display:'flex',alignItems:'center',gap:12}}>
+        <span style={{fontWeight:700,fontSize:13}}>{dp.label}</span>
+        <span style={{fontSize:11,opacity:0.8}}>{dp.time}</span>
+        {tally && <span style={{fontSize:12,fontWeight:700,backgroundColor:tally.st.bg,color:tally.st.co,padding:'2px 10px',borderRadius:12}}>{tally.st.ic} {tally.text}</span>}
+        <span style={{marginLeft:'auto',fontSize:12,fontWeight:700,backgroundColor:'rgba(255,255,255,0.2)',padding:'2px 10px',borderRadius:12}}>{booked}</span>
+      </div>
+      {spots.length > 0 && (
+        <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+          <thead>
+            <tr style={{backgroundColor:'#f9fafb'}}>
+              <th style={{...TH,width:200}}>Creative</th>
+              <th style={{...TH,width:70,textAlign:'center'}}>Cat</th>
+              <th style={{...TH,width:40,textAlign:'center'}}>Dur</th>
+              <th style={{...TH,width:130}}>Title</th>
+              <th style={{...TH,width:50,textAlign:'center'}}>Qty</th>
+              <th style={{...TH,width:55,textAlign:'center'}}>Total</th>
+              <th style={{...TH,width:140}}>Cut-off note</th>
+              <th style={{...TH,width:90}}>Expiry</th>
+              <th style={{...TH,width:30}}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {spots.map(function(spot,si) {
+              var c=null;
+              for(var i=0;i<creatives.length;i++){ if(creatives[i].keyNumber===spot.k){c=creatives[i];break;} }
+              var siCopy=si;
+              return (
+                <tr key={si} style={{borderBottom:'1px solid #e5e7eb',backgroundColor:si%2===0?'#fff':'#f9fafb'}}>
+                  <td style={{...TD,padding:'4px 8px'}}>
+                    <select value={spot.k} onChange={function(e){onKey(siCopy,e.target.value);}} style={{width:'100%',border:'1px solid #d1d5db',borderRadius:4,padding:'3px 6px',fontSize:11,backgroundColor:'#fff'}}>
+                      <option value="">— Select creative —</option>
+                      {rdcCreatives.slice().sort(function(a,b){var ai=CAT_ORDER.indexOf(a.cat),bi=CAT_ORDER.indexOf(b.cat);if(ai!==bi)return ai-bi;return a.keyNumber<b.keyNumber?-1:1;}).map(function(rc){
+                        return <option key={rc.keyNumber} value={rc.keyNumber}>[{rc.cat}] {rc.keyNumber} — {stripDur(rc.title)}</option>;
+                      })}
+                    </select>
+                  </td>
+                  <td style={{...TD,textAlign:'center',fontSize:11}}>{c ? <CatBadge cat={c.cat}/> : '—'}</td>
+                  <td style={{...TD,textAlign:'center',fontSize:11}}>{c ? ':'+c.dur : '—'}</td>
+                  <td style={{...TD,padding:'4px 6px'}}>
+                    <input type="text" value={spot.t||''} onChange={function(e){onField(siCopy,'t',e.target.value);}} placeholder={c?stripDur(c.title):'Title'} style={{width:'100%',border:'1px solid #d1d5db',borderRadius:4,padding:'3px 6px',fontSize:11}}/>
+                  </td>
+                  <td style={{...TD,padding:'4px 6px',textAlign:'center'}}>
+                    <input type="number" min={1} value={spot.q==null||spot.q===''?(spot.k?1:''):spot.q} onChange={function(e){onField(siCopy,'q',e.target.value);}} style={{width:40,textAlign:'center',border:'1px solid #d1d5db',borderRadius:4,padding:'3px',fontSize:11}}/>
+                  </td>
+                  <td style={{...TD,textAlign:'center',fontSize:11,fontWeight:600,color:'#374151'}}>{c?(spotQty(spot)*(parseInt(c.dur)||0))+'s':'—'}</td>
+                  <td style={{...TD,padding:'4px 6px'}}>
+                    <input type="text" value={spot.i||''} onChange={function(e){onField(siCopy,'i',e.target.value);}} placeholder="e.g. Must run before midday" style={{width:'100%',border:'1px solid #d1d5db',borderRadius:4,padding:'3px 6px',fontSize:11}}/>
+                  </td>
+                  <td style={{...TD,fontSize:11,color:'#6b7280'}}>{c&&c.end?fmt(c.end):'—'}</td>
+                  <td style={{...TD,textAlign:'center'}}>
+                    <button onClick={function(){onRemove(siCopy);}} style={{color:'#ef4444',background:'none',border:'none',cursor:'pointer',fontSize:16,lineHeight:1}}>×</button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+      {spots.length === 0 && <div style={{padding:'12px 14px',color:'#9ca3af',fontSize:12}}>No spots added yet.</div>}
+      <div style={{padding:'8px 14px',backgroundColor:'#f9fafb',borderTop:'1px solid #e5e7eb',display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+        <button onClick={onAdd} style={{fontSize:12,color:colr,background:'none',border:'1px solid '+colr,borderRadius:5,padding:'4px 12px',cursor:'pointer',fontWeight:600}}>+ Add Spot</button>
+        {copySources&&copySources.length>0 && (
+          <span style={{display:'inline-flex',alignItems:'center',gap:5}}>
+            <span style={{fontSize:11,color:'#9ca3af'}}>or copy from:</span>
+            <select value="" onChange={function(e){if(e.target.value){onCopyFrom(e.target.value);e.target.value='';}}} style={{border:'1px solid #d1d5db',borderRadius:5,padding:'3px 6px',fontSize:11,backgroundColor:'#fff',color:'#374151',cursor:'pointer'}}>
+              <option value="">— previous timeslot —</option>
+              {copySources.map(function(s){return <option key={s.k} value={s.k}>{s.label} ({s.count})</option>;})}
+            </select>
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  var stTab=useState('planner'), tab=stTab[0], setTab=stTab[1];
+  var stPlatform=useState('tv'), platform=stPlatform[0], setPlatform=stPlatform[1];
+  var stC=useState(DEFAULTS), creatives=stC[0], setC=stC[1];
+  var stWC=useState(currentWeekSunday()), wc=stWC[0], setWC=stWC[1];
+  var stRots=useState({}), rots=stRots[0], setRots=stRots[1];
+  var stNotes=useState({}), notes=stNotes[0], setNotes=stNotes[1];
+  var stAN=useState(null), activeNote=stAN[0], setActiveNote=stAN[1];
+  var stPN=useState('fox'), planNet=stPN[0], setPlanNet=stPN[1];
+  var stON=useState('fox'), outNet=stON[0], setOutNet=stON[1];
+  var stEN=useState('fox'), emailNet=stEN[0], setEmailNet=stEN[1];
+  var stEC=useState(DEFAULT_EMAILS), emailConfig=stEC[0], setEmailConfig=stEC[1];
+  var stRdcMI=useState({}), rdcMI=stRdcMI[0], setRdcMI=stRdcMI[1];
+  var stRdcDay=useState('sun'), rdcDay=stRdcDay[0], setRdcDay=stRdcDay[1];
+  var stAdd=useState(false), showAdd=stAdd[0], setShowAdd=stAdd[1];
+  var stNewC=useState(BLANK), newC=stNewC[0], setNewC=stNewC[1];
+  var stLoaded=useState(false), loaded=stLoaded[0], setLoaded=stLoaded[1];
+  var stFlash=useState(''), flash=stFlash[0], setFlash=stFlash[1];
+  var stConfirmClear=useState(false), confirmClear=stConfirmClear[0], setConfirmClear=stConfirmClear[1];
+  var stFoxModal=useState(null), foxModal=stFoxModal[0], setFoxModal=stFoxModal[1];
+
+  useEffect(function(){
+    (async function(){
+      try{
+        var ver=await window.storage.get('mi_v').catch(function(){return null;});
+        if(!ver||ver.value!==SV){
+          await window.storage.set('mi_v',SV).catch(function(){});
+          await window.storage.delete('mi_c').catch(function(){});
+          await window.storage.delete('mi_r').catch(function(){});
+        } else {
+          var r1=await window.storage.get('mi_c').catch(function(){return null;});
+          if(r1&&r1.value){try{var ld=JSON.parse(r1.value);var mg=ld.map(function(c){var n=Object.assign({},BLANK_NETS,c.nets);if(c.cat==='AFL')n.rdc=true;return Object.assign({},c,{nets:n});});setC(mg);window.storage.set('mi_c',JSON.stringify(mg)).catch(function(){});}catch(e){}}
+          var r2=await window.storage.get('mi_r').catch(function(){return null;});if(r2&&r2.value){try{setRots(JSON.parse(r2.value));}catch(e){}}
+          var r3=await window.storage.get('mi_wc').catch(function(){return null;});if(r3&&r3.value)setWC(r3.value);
+          var r4=await window.storage.get('mi_notes').catch(function(){return null;});if(r4&&r4.value){try{setNotes(JSON.parse(r4.value));}catch(e){}}
+          var r5=await window.storage.get('mi_emails2').catch(function(){return null;});if(r5&&r5.value){try{setEmailConfig(Object.assign({},DEFAULT_EMAILS,JSON.parse(r5.value)));}catch(e){}}
+          var r6=await window.storage.get('mi_platform').catch(function(){return null;});if(r6&&r6.value)setPlatform(r6.value);
+          var r7=await window.storage.get('mi_rdcmi').catch(function(){return null;});if(r7&&r7.value){try{var rd=JSON.parse(r7.value);Object.keys(rd).forEach(function(wk){var wd=rd[wk];if(!wd)return;DAYS.forEach(function(dy){if(!wd[dy])return;Object.keys(wd[dy]).forEach(function(dpk){(wd[dy][dpk]||[]).forEach(function(sp){if(sp&&sp.q==null){var m=String(sp.i||'').match(/(\d+)\s*x/i);if(m){sp.q=m[1];sp.i=String(sp.i).replace(/^\s*\d+\s*x\s*\d*\s*secs?\s*/i,'').replace(/^[\s—-]+/,'').trim();}else if(sp.k){sp.q='1';}}});});});});setRdcMI(rd);}catch(e){}}
+        }
+      }catch(e){}
+      setLoaded(true);
+    })();
+  },[]);
+
+  useEffect(function(){ if(loaded) window.storage.set('mi_c',JSON.stringify(creatives)).catch(function(){}); },[creatives,loaded]);
+  useEffect(function(){ if(loaded) window.storage.set('mi_r',JSON.stringify(rots)).catch(function(){}); },[rots,loaded]);
+  useEffect(function(){ if(loaded) window.storage.set('mi_wc',wc).catch(function(){}); },[wc,loaded]);
+  useEffect(function(){ if(loaded) window.storage.set('mi_notes',JSON.stringify(notes)).catch(function(){}); },[notes,loaded]);
+  useEffect(function(){ if(loaded) window.storage.set('mi_emails2',JSON.stringify(emailConfig)).catch(function(){}); },[emailConfig,loaded]);
+  useEffect(function(){ if(loaded) window.storage.set('mi_platform',platform).catch(function(){}); },[platform,loaded]);
+  useEffect(function(){ if(loaded) window.storage.set('mi_rdcmi',JSON.stringify(rdcMI)).catch(function(){}); },[rdcMI,loaded]);
+
+  // Load xlsx-js-style (styled fork) from CDN so exports can carry cell colours/borders.
+  useEffect(function(){
+    if(typeof window==='undefined'||window.__xlsxStyleLoaded) return;
+    var s=document.createElement('script');
+    s.src='vendor/xlsx.bundle.js';
+    s.async=true;
+    s.onload=function(){window.__xlsxStyleLoaded=true;};
+    s.onerror=function(){var c=document.createElement('script');c.src='https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js';c.async=true;c.onload=function(){window.__xlsxStyleLoaded=true;};c.onerror=function(){console.warn('xlsx-js-style load failed \u2014 exports will lack styling');};document.head.appendChild(c);};
+    document.head.appendChild(s);
+  },[]);
+
+  useEffect(function(){
+    var pn=NETS.filter(function(n){return n.platform===platform&&!n.customMI;});
+    var an=NETS.filter(function(n){return n.platform===platform;});
+    var fp=pn[0]?pn[0].k:null;
+    if(fp){if(!pn.find(function(n){return n.k===planNet;}))setPlanNet(fp);if(!pn.find(function(n){return n.k===outNet;}))setOutNet(fp);}
+    if(!an.find(function(n){return n.k===emailNet;})&&an[0])setEmailNet(an[0].k);
+    setActiveNote(null);
+  },[platform]);
+
+  var weekDates = useMemo(function(){return getWeekDates(wc);},[wc]);
+  var wcEnd = weekDates[6]||'';
+  var platformNets = useMemo(function(){return NETS.filter(function(n){return n.platform===platform&&!n.customMI;});},[platform]);
+  var allPlatNets  = useMemo(function(){return NETS.filter(function(n){return n.platform===platform;});},[platform]);
+  var active = useMemo(function(){return creatives.filter(function(c){return (c.air||'0000-00-00')<=wcEnd&&(c.end||'9999-12-31')>=wc;});},[creatives,wc,wcEnd]);
+
+  function getDR(id,net,day){ return rots[id]&&rots[id][net]?(rots[id][net][day]||''):''; }
+  function getNote(id,day){ return notes[id]?(notes[id][day]||''):''; }
+
+  var grouped = useMemo(function(){
+    var g={};
+    CAT_ORDER.forEach(function(cat){var it=active.filter(function(c){return c.cat===cat&&c.nets&&c.nets[planNet];});if(it.length)g[cat]=it;});
+    return g;
+  },[active,planNet]);
+
+  var allGrouped = useMemo(function(){
+    var g={};
+    CAT_ORDER.forEach(function(cat){var it=creatives.filter(function(c){return c.cat===cat;});if(it.length)g[cat]=it;});
+    return g;
+  },[creatives]);
+
+  function outRows(net){ return active.filter(function(c){return c.nets&&c.nets[net]&&DAYS.some(function(d){return !!getDR(c.id,net,d);});}); }
+
+  var dayTotals = useMemo(function(){
+    var t={};
+    DAYS.forEach(function(day,i){t[day]=active.filter(function(c){return c.nets&&c.nets[planNet]&&dayEnabled(c,weekDates[i]||'');}).reduce(function(s,c){return s+(parseFloat(getDR(c.id,planNet,day))||0);},0);});
+    return t;
+  },[active,planNet,rots,weekDates]);
+
+  var rdcCreatives = useMemo(function(){return creatives.filter(function(c){return c.nets&&c.nets.rdc;});},[creatives]);
+
+  function zap(msg){ setFlash(msg); setTimeout(function(){setFlash('');},2500); }
+
+  function clearAllocations(){
+    if(!confirmClear){setConfirmClear(true);setTimeout(function(){setConfirmClear(false);},4000);return;}
+    var nl=(NETS.find(function(n){return n.k===planNet;})||{label:planNet}).label;
+    setRots(function(prev){var u={};Object.keys(prev).forEach(function(id){if(prev[id]){var c=Object.assign({},prev[id]);c[planNet]={};u[id]=c;}});return u;});
+    setConfirmClear(false);
+    zap('✓ Cleared all '+nl+' allocations');
+  }
+
+  function getCurWeek(){ return rdcMI[wc]||initRdcWeek(); }
+
+  function updRdcMI(fn){
+    setRdcMI(function(prev){
+      var week=JSON.parse(JSON.stringify(prev[wc]||initRdcWeek()));
+      fn(week);
+      var next=Object.assign({},prev);
+      next[wc]=week;
+      return next;
+    });
+  }
+
+  function rdcAddSpot(day,dpk){ updRdcMI(function(w){if(!w[day])w[day]={};if(!w[day][dpk])w[day][dpk]=[];w[day][dpk].push({k:'',q:'1',i:'',t:''});}); }
+  function rdcRemoveSpot(day,dpk,idx){ updRdcMI(function(w){w[day][dpk].splice(idx,1);}); }
+  function rdcUpdateKey(day,dpk,idx,newKey){
+    updRdcMI(function(w){
+      var c=null;
+      for(var i=0;i<creatives.length;i++){if(creatives[i].keyNumber===newKey){c=creatives[i];break;}}
+      w[day][dpk][idx].k=newKey;
+      w[day][dpk][idx].t=c?stripDur(c.title):'';
+      if(!w[day][dpk][idx].q) w[day][dpk][idx].q='1';
+    });
+  }
+  function rdcUpdateField(day,dpk,idx,field,val){ updRdcMI(function(w){w[day][dpk][idx][field]=val;}); }
+
+  function rdcCopyFromDaypart(day,targetDpk,sourceDpk){
+    var src=(rdcMI[wc]&&rdcMI[wc][day]&&rdcMI[wc][day][sourceDpk])||[];
+    var copy=JSON.parse(JSON.stringify(src.filter(function(s){return !!s.k;})));
+    updRdcMI(function(w){ if(!w[day])w[day]={}; w[day][targetDpk]=copy; });
+    var sl=(RDC_DAYPARTS.find(function(d){return d.k===sourceDpk;})||{label:sourceDpk}).label;
+    zap('✓ Copied '+copy.length+' spot'+(copy.length!==1?'s':'')+' from '+sl);
+  }
+
+  function rdcCopyFromDay(targetDay,sourceDay){
+    var src=(rdcMI[wc]&&rdcMI[wc][sourceDay])||{};
+    updRdcMI(function(w){
+      if(!w[targetDay])w[targetDay]={};
+      RDC_DAYPARTS.forEach(function(dp){
+        // only copy dayparts valid on BOTH days
+        if(dp.daysOnly&&(!dp.daysOnly.includes(targetDay)||!dp.daysOnly.includes(sourceDay))) return;
+        var s=(src[dp.k]||[]).filter(function(x){return !!x.k;});
+        w[targetDay][dp.k]=JSON.parse(JSON.stringify(s));
+      });
+    });
+    var sl=DAY_L[DAYS.indexOf(sourceDay)];
+    zap('✓ Copied all timeslots from '+sl);
+  }
+
+  function rdcCopyFromLastWeek(){
+    var pd=new Date(wc+'T00:00:00'); pd.setDate(pd.getDate()-7);
+    var ps=pd.toISOString().split('T')[0];
+    var pw=rdcMI[ps];
+    if(!pw){zap('⚠ No previous week data found');return;}
+    var nw={};
+    DAYS.forEach(function(day,i){
+      var dd=weekDates[i]||'';
+      nw[day]={};
+      RDC_DAYPARTS.forEach(function(dp){
+        if(dp.daysOnly&&!dp.daysOnly.includes(day)) return;
+        var prev=(pw[day]&&pw[day][dp.k])||[];
+        var filtered=prev.filter(function(spot){
+          if(!spot.k) return false;
+          var c=null;
+          for(var j=0;j<creatives.length;j++){if(creatives[j].keyNumber===spot.k){c=creatives[j];break;}}
+          if(!c) return true;
+          if(c.air&&c.end&&c.air===c.end) return false;
+          return !c.end||c.end>=dd;
+        });
+        nw[day][dp.k]=(dp.k==='lateNight'&&filtered.length===0)?[{k:'FXC26BRPA30',q:'1',i:'',t:'Follow Foxcatcher'}]:filtered;
+      });
+    });
+    setRdcMI(function(prev){var next=Object.assign({},prev);next[wc]=nw;return next;});
+    zap('✓ Copied from previous week — expired spots removed');
+  }
+
+  function exportRDCMI(daysSubset,label){
+    var exportDays=(daysSubset&&daysSubset.length)?daysSubset:DAYS;
+    var cw=rdcMI[wc]||initRdcWeek();
+    var XLSX=getXLSX();
+    var hasStyles=(XLSX!==XLSX_NPM);
+    // 11 columns: DayPart, Time, Booked, (Pointsbet), (Category), Duration, Key Number, EVS ID, Title, Instructions, Expiry
+    var rows=[];
+    var meta=[]; // per-row: {type:'date'|'header'|'spot'|'dpEmpty'|'blank', booked?, dpLabel?}
+    function pushRow(arr,m){ rows.push(arr); meta.push(m||{type:'blank'}); }
+    DAYS.forEach(function(day,i){
+      if(exportDays.indexOf(day)<0) return;
+      var dd=weekDates[i]||'';
+      pushRow([fmtRDC(dd),'','','','','','','','','',''],{type:'date'});
+      pushRow(['Day Part','Time','Booked','','','Duration','Key Number','EVS ID','Title','Instructions/Cut Offs','Expiry Date'],{type:'header'});
+      var dayData=cw[day]||{};
+      RDC_DAYPARTS.forEach(function(dp){
+        if(dp.daysOnly&&!dp.daysOnly.includes(day)) return;
+        var booked=dp.booked(day);
+        var spots=(dayData[dp.k]||[]).filter(function(spot){return spot&&spot.k;});
+        if(!spots.length){
+          pushRow([dp.label,dp.time,booked,'','','','','','','',''],{type:'spot',dpLabel:true,booked:booked});
+        } else {
+          spots.forEach(function(spot,si){
+            var c=null;
+            for(var j=0;j<creatives.length;j++){if(creatives[j].keyNumber===spot.k){c=creatives[j];break;}}
+            var qty=spotQty(spot);
+            var instr=c?(qty+' x '+c.dur+'secs'):'';
+            if(spot.i) instr=instr?(instr+' — '+spot.i):spot.i;
+            pushRow([si===0?dp.label:'',dp.time,si===0?booked:'','Pointsbet',c?c.cat:'',c?c.dur:'',spot.k,'',spot.t||(c?stripDur(c.title):spot.k),instr,c&&c.end?fmt(c.end):''],{type:'spot',dpLabel:si===0,booked:si===0?booked:''});
+          });
+        }
+        pushRow([],{type:'blank'});
+      });
+      pushRow([],{type:'blank'});
+    });
+    try{
+      var ws=XLSX.utils.aoa_to_sheet(rows);
+      ws['!cols']=[{wch:26},{wch:30},{wch:13},{wch:11},{wch:20},{wch:10},{wch:18},{wch:9},{wch:42},{wch:22},{wch:13}];
+      if(hasStyles){
+        var thin={style:'thin',color:{rgb:'000000'}};
+        var border={top:thin,bottom:thin,left:thin,right:thin};
+        var BLACK='000000', WHITE='FFFFFF', RED='C00000';
+        function cell(r,c){ var a=XLSX.utils.encode_cell({r:r,c:c}); if(!ws[a])ws[a]={t:'s',v:''}; return ws[a]; }
+        for(var r=0;r<meta.length;r++){
+          var m=meta[r];
+          if(m.type==='date'){
+            var d0=cell(r,0); d0.s={font:{bold:true,sz:13,color:{rgb:RED}}};
+          } else if(m.type==='header'){
+            for(var c=0;c<11;c++){
+              var hc=cell(r,c);
+              hc.s={font:{bold:true,color:{rgb:WHITE},sz:11},fill:{fgColor:{rgb:BLACK}},alignment:{horizontal:c===0?'left':'center',vertical:'center'},border:border};
+            }
+          } else if(m.type==='spot'){
+            for(var c2=0;c2<11;c2++){
+              var sc=cell(r,c2);
+              var isBooked=(c2===2&&/bonus/i.test(String(rows[r][2]||'')));
+              sc.s={font:{bold:(c2===0&&m.dpLabel)||isBooked,color:{rgb:isBooked?RED:BLACK},sz:11},alignment:{horizontal:(c2===0||c2===3||c2===4||c2===6||c2===8||c2===9)?'left':'center',vertical:'center'},border:border};
+            }
+          }
+        }
+      }
+      var wb=XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb,ws,'RDC MI');
+      var wbout=XLSX.write(wb,{bookType:'xlsx',type:'array'});
+      var blob=new Blob([wbout],{type:'application/octet-stream'});
+      var url=URL.createObjectURL(blob);
+      var a=document.createElement('a');a.href=url;a.download='PointsBet_RDC_MI_WC'+wc+(label?'_'+label:'')+'.xlsx';
+      document.body.appendChild(a);a.click();document.body.removeChild(a);
+      setTimeout(function(){URL.revokeObjectURL(url);},150);
+      zap(hasStyles?'✓ RDC MI exported (styled)':'⚠ RDC MI exported — styling not loaded, formatting plain');
+      return true;
+    }catch(e){zap('⚠ Export failed');return false;}
+  }
+
+  function foxRotationFor(day,dur){
+    // creatives ticked for fox, active that day, matching duration, with a rotation % > 0
+    var di=DAYS.indexOf(day);
+    var date=weekDates[di]||'';
+    var list=[];
+    active.forEach(function(c){
+      if(!c.nets||!c.nets.fox) return;
+      if(String(c.dur)!==String(dur)) return;
+      if(!dayEnabled(c,date)) return;
+      var pct=parseFloat(getDR(c.id,'fox',day))||0;
+      if(pct>0) list.push({c:c,pct:pct});
+    });
+    return list;
+  }
+
+  function weightedSequence(list,n){
+    // weighted round-robin: spread creatives across n slots by their pct, interleaved
+    if(!list.length||n<=0) return [];
+    var total=list.reduce(function(s,x){return s+x.pct;},0);
+    if(total<=0) return [];
+    var acc=list.map(function(){return 0;});
+    var out=[];
+    for(var i=0;i<n;i++){
+      // add each weight share, pick the highest accumulator
+      var best=-1,bestVal=-Infinity;
+      for(var j=0;j<list.length;j++){
+        acc[j]+=list[j].pct/total;
+        if(acc[j]>bestVal){bestVal=acc[j];best=j;}
+      }
+      acc[best]-=1;
+      out.push(list[best].c);
+    }
+    return out;
+  }
+
+  function handleFoxUpload(e){
+    var file=e.target.files&&e.target.files[0];
+    if(!file){return;}
+    zap('⏳ Reading Fox file: '+file.name+'…');
+    var reader=new FileReader();
+    reader.onload=function(ev){
+      try{
+        var XLSX=getXLSX();
+        var data=new Uint8Array(ev.target.result);
+        var wb=XLSX.read(data,{type:'array',cellStyles:true});
+        var sheetName=wb.SheetNames[0];
+        var ws=wb.Sheets[sheetName];
+        var aoa=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+        // find header row: look for a row containing "Industry Code" and "Day" and "Length"
+        var hdrRow=-1, codeCol=-1, dayCol=-1, lenCol=-1;
+        for(var r=0;r<Math.min(aoa.length,15);r++){
+          var row=aoa[r].map(function(x){return String(x).toLowerCase().trim();});
+          var ci=row.findIndex(function(x){return x.indexOf('industry')>=0&&x.indexOf('code')>=0;});
+          var di=row.findIndex(function(x){return x==='day';});
+          var li=row.findIndex(function(x){return x==='length';});
+          if(ci>=0&&di>=0&&li>=0){hdrRow=r;codeCol=ci;dayCol=di;lenCol=li;break;}
+        }
+        if(hdrRow<0){
+          setFoxModal({title:'Could not read Fox file',body:'Couldn\u2019t find a header row with "Industry Code", "Day" and "Length" columns. Make sure you\u2019re uploading Fox\u2019s clear booking sheet.',issues:[]});
+          e.target.value='';return;
+        }
+        var dayMap={sunday:'sun',monday:'mon',tuesday:'tue',wednesday:'wed',thursday:'thu',friday:'fri',saturday:'sat',sun:'sun',mon:'mon',tue:'tue',wed:'wed',thu:'thu',fri:'fri',sat:'sat'};
+        // collect spot rows grouped by day, preserving original sheet row index (0-based for XLSX cells)
+        var byDay={}; DAYS.forEach(function(d){byDay[d]=[];});
+        var allSpotRows=[];
+        for(var rr=hdrRow+1;rr<aoa.length;rr++){
+          var row=aoa[rr]; if(!row) continue;
+          var dRaw=String(row[dayCol]||'').toLowerCase().trim();
+          var dayKey=dayMap[dRaw];
+          var lenRaw=String(row[lenCol]||'').replace(/[^0-9]/g,'');
+          if(!dayKey||!lenRaw) continue;
+          var spot={rowIdx:rr,dur:lenRaw,day:dayKey};
+          byDay[dayKey].push(spot); allSpotRows.push(spot);
+        }
+        // ── ASSIGN creatives per day per duration via weighted round-robin ──
+        var usedCreatives={}; // keyNumber -> creative (for lookup table)
+        var assigned=0, unmatched=0, issues=[];
+        DAYS.forEach(function(day){
+          var spots=byDay[day]; if(!spots.length) return;
+          var byDur={}; spots.forEach(function(s){if(!byDur[s.dur])byDur[s.dur]=[];byDur[s.dur].push(s);});
+          Object.keys(byDur).forEach(function(dur){
+            var slots=byDur[dur];
+            var rot=foxRotationFor(day,dur);
+            if(!rot.length){
+              unmatched+=slots.length;
+              issues.push(DAY_L[DAYS.indexOf(day)]+' :'+dur+' — '+slots.length+' spot'+(slots.length>1?'s':'')+' with no matching Fox rotation %');
+              slots.forEach(function(s){s.assignedKey=null;});
+              return;
+            }
+            var seq=weightedSequence(rot,slots.length);
+            slots.forEach(function(s,i){
+              var c=seq[i];
+              if(!c){s.assignedKey=null;unmatched++;return;}
+              s.assignedKey=c.keyNumber;
+              usedCreatives[c.keyNumber]=c;
+              assigned++;
+            });
+          });
+        });
+        // ── BUILD lookup table (cols P=16,Q=17,R=18 → 0-based 15,16,17) grouped by category ──
+        // group used creatives by our CAT_ORDER, with friendly section headers
+        var SECTION_LABEL={NRL:'NRL 2026 Season:',AFL:'AFL 2026 Season:',NBA:'NBA:',MLB:'MLB:',Racing:'RACING:','Foxcatcher/StatMate':'FOXCATCHER / STATMATE:','World Cup':'WORLD CUP:',Other:'OTHER:'};
+        var lookupRowFor={}; // keyNumber -> 1-based sheet row of its lookup entry
+        var P=15,Q=16,R=17; // 0-based column indices
+        var curRow=hdrRow+1; // start lookup table aligned just under the header, leaving a gap
+        // small gap from header
+        curRow=hdrRow+2;
+        function setCell(cIdx,rIdx0,val){ var addr=XLSX.utils.encode_cell({r:rIdx0,c:cIdx}); ws[addr]={t:(typeof val==='number'?'n':'s'),v:val}; }
+        CAT_ORDER.forEach(function(cat){
+          var keys=Object.keys(usedCreatives).filter(function(k){return usedCreatives[k].cat===cat;});
+          if(!keys.length) return;
+          // section header
+          setCell(P,curRow,SECTION_LABEL[cat]||(cat+':'));
+          curRow++;
+          keys.forEach(function(k){
+            var c=usedCreatives[k];
+            setCell(P,curRow,c.keyNumber);
+            setCell(Q,curRow,parseInt(c.dur)||c.dur);
+            setCell(R,curRow,c.title);
+            lookupRowFor[k]=curRow+1; // store 1-based for formulas
+            curRow++;
+          });
+          curRow++; // blank gap between sections
+        });
+        // ── INSERT two columns (E,F) after Industry Code, point D/E/F to lookup via formula ──
+        // We do this by writing formulas directly. Industry Code is at codeCol (0-based).
+        // Match the example: D=code col=P ref, E(code+1)=Q ref, F(code+2)=R ref.
+        // Shift existing columns from codeCol+1 onward right by 2 to make room — but the example
+        // simply uses cols 5 & 6 (E,F) for dur/title and Fox's real data starts at col 7.
+        // Fox's clear sheet already leaves E,F blank (cols 5,6) before Scheduled Date at col 7,
+        // so we write into them directly without shifting.
+        var eCol=codeCol+1, fCol=codeCol+2;
+        allSpotRows.forEach(function(s){
+          var lr=s.assignedKey?lookupRowFor[s.assignedKey]:null;
+          if(lr){
+            ws[XLSX.utils.encode_cell({r:s.rowIdx,c:codeCol})]={t:'s',f:'P'+lr};
+            ws[XLSX.utils.encode_cell({r:s.rowIdx,c:eCol})]={t:'n',f:'Q'+lr};
+            ws[XLSX.utils.encode_cell({r:s.rowIdx,c:fCol})]={t:'s',f:'R'+lr};
+          }
+        });
+        // header labels for E,F
+        ws[XLSX.utils.encode_cell({r:hdrRow,c:eCol})]={t:'s',v:'Duration'};
+        ws[XLSX.utils.encode_cell({r:hdrRow,c:fCol})]={t:'s',v:'Creative Title'};
+        // expand range to cover lookup table + new cols
+        var range=XLSX.utils.decode_range(ws['!ref']);
+        if(R>range.e.c)range.e.c=R;
+        if(curRow>range.e.r)range.e.r=curRow;
+        ws['!ref']=XLSX.utils.encode_range(range);
+        // write out
+        var outName='PointsBet_FoxFooty_WC'+wc+'.xlsx';
+        var wbout=XLSX.write(wb,{bookType:'xlsx',type:'array'});
+        var blob=new Blob([wbout],{type:'application/octet-stream'});
+        var url=URL.createObjectURL(blob);
+        var a=document.createElement('a');a.href=url;a.download=outName;
+        document.body.appendChild(a);a.click();document.body.removeChild(a);
+        setTimeout(function(){URL.revokeObjectURL(url);},150);
+        zap('\u2713 Fox Footy MI exported \u2014 '+assigned+' spots assigned'+(unmatched?' \u00b7 '+unmatched+' unmatched':''));
+        if(unmatched>0){
+          setFoxModal({title:'Fox file generated \u2014 '+unmatched+' unmatched spot'+(unmatched>1?'s':''),body:'The file downloaded with the lookup table and Duration/Creative Title columns filled in. Some spots couldn\u2019t be auto-assigned because no Fox rotation % was set for that day + duration. Set the % in the Weekly Planner and re-upload, or fill those rows in manually.',issues:issues});
+        }
+      }catch(err){
+        setFoxModal({title:'Fox file processing failed',body:'Something went wrong reading the file: '+(err&&err.message?err.message:String(err)),issues:[]});
+      }
+      e.target.value='';
+    };
+    reader.onerror=function(){zap('\u26a0 Could not read file');e.target.value='';};
+    reader.readAsArrayBuffer(file);
+  }
+
+  function buildCSV(net){
+    var rows=outRows(net);
+    var lbl=(NETS.find(function(n){return n.k===net;})||{label:net}).label;
+    function esc(v){return '"'+String(v||'').replace(/"/g,'""')+'"';}
+    var data=[];
+    DAYS.forEach(function(day,i){
+      var date=weekDates[i]||'';
+      var dayRows=rows.filter(function(r){return dayEnabled(r,date)&&(parseFloat(getDR(r.id,net,day))||0)>0;});
+      if(!dayRows.length) return;
+      if(data.length) data.push([]);
+      data.push([DAY_L[i]+' '+fmtShort(date)]);
+      data.push(['Key Number','Creative Title','Duration','Category','Allocation','Notes']);
+      dayRows.forEach(function(r){
+        var raw=getDR(r.id,net,day);
+        var alloc=raw+'%';
+        return data.push([r.keyNumber,r.title,':'+r.dur,r.cat,alloc,getNote(r.id,day)]);
+      });
+    });
+    var csv='\uFEFF'+data.map(function(r){return r.map(esc).join(',');}).join('\n');
+    return {csv:csv,fname:'PointsBet_MI_'+lbl.replace(/[^a-zA-Z0-9]/g,'_')+'_WC'+wc+'.csv'};
+  }
+
+  function exportCSV(net){
+    try{
+      var result=buildCSV(net);
+      var blob=new Blob([result.csv],{type:'text/csv;charset=utf-8'});
+      var url=URL.createObjectURL(blob);
+      var a=document.createElement('a');a.href=url;a.download=result.fname;
+      document.body.appendChild(a);a.click();document.body.removeChild(a);
+      setTimeout(function(){URL.revokeObjectURL(url);},150);
+      return true;
+    }catch(e){zap('⚠ Export failed');return false;}
+  }
+
+  function prepareEmail(net){
+    var ok=net==='rdc'?exportRDCMI():exportCSV(net);
+    if(!ok) return;
+    var cfg=emailConfig[net];
+    if(!cfg||!cfg.to){zap('⚠ Add a To address in Email Prep first');return;}
+    var d=fmt(wc);
+    var params=[];
+    var ccList=(cfg.cc||'').split(',').map(function(s){return s.trim();}).filter(function(s){return !!s;});
+    if(ccList.length)params.push('cc='+encodeURIComponent(ccList.join(',')));
+    params.push('subject='+encodeURIComponent((cfg.subject||'').replace(/\[WC_DATE\]/g,d)));
+    params.push('body='+encodeURIComponent((cfg.body||'').replace(/\[WC_DATE\]/g,d)));
+    var toList=(cfg.to||'').split(',').map(function(s){return s.trim();}).filter(function(s){return !!s;});
+    var ma=document.createElement('a');
+    ma.href='mailto:'+toList.join(',')+(params.length?'?'+params.join('&'):'');
+    document.body.appendChild(ma);ma.click();document.body.removeChild(ma);
+    zap('✓ '+(net==='rdc'?'RDC MI':'CSV')+' downloaded — email client opening');
+  }
+
+  var stRotSel=useState({}), rotSel=stRotSel[0], setRotSel=stRotSel[1];
+
+  function sendRotationEmail(){
+    var cfg=emailConfig[emailNet]||{};
+    if(!cfg.to){zap('\u26A0 Add a To address first');return;}
+    var keys=Object.keys(rotSel).filter(function(k){return rotSel[k];});
+    if(!keys.length){zap('\u26A0 Select at least one creative');return;}
+    var firstName=(cfg.to.split(',')[0].split('@')[0].split('.')[0]||'');
+    firstName=firstName.charAt(0).toUpperCase()+firstName.slice(1);
+    var nl=(NETS.find(function(n){return n.k===emailNet;})||{label:emailNet}).label;
+    var body='Hi '+firstName+',\n\nCan we rotate the below evenly through our booked spots please?\n\n'+keys.join('\n')+'\n\nThanks!';
+    var params=[];
+    var ccList=(cfg.cc||'').split(',').map(function(x){return x.trim();}).filter(function(x){return !!x;});
+    if(ccList.length)params.push('cc='+encodeURIComponent(ccList.join(',')));
+    params.push('subject='+encodeURIComponent('PointsBet \u2014 '+nl+' Rotation Update'));
+    params.push('body='+encodeURIComponent(body));
+    var ma=document.createElement('a');
+    ma.href='mailto:'+cfg.to+(params.length?'?'+params.join('&'):'');
+    document.body.appendChild(ma);ma.click();document.body.removeChild(ma);
+    setRotSel({});
+    zap('\u2713 Rotation update email opening');
+  }
+
+  function backupState(){
+    var out={v:SV,exported:new Date().toISOString(),creatives:creatives,rots:rots,notes:notes,emails:emailConfig,rdcMI:rdcMI,wc:wc,platform:platform};
+    var blob=new Blob([JSON.stringify(out,null,2)],{type:'application/json'});
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');a.href=url;a.download='mi-planner-backup-'+TODAY+'.json';
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    setTimeout(function(){URL.revokeObjectURL(url);},150);
+    zap('\u2713 Backup downloaded');
+  }
+
+  function restoreState(e){
+    var file=e.target.files&&e.target.files[0]; if(!file)return;
+    var reader=new FileReader();
+    reader.onload=function(ev){
+      try{
+        var d=JSON.parse(ev.target.result);
+        if(d.creatives)setC(d.creatives);
+        if(d.rots)setRots(d.rots);
+        if(d.notes)setNotes(d.notes);
+        if(d.emails)setEmailConfig(Object.assign({},DEFAULT_EMAILS,d.emails));
+        if(d.rdcMI)setRdcMI(d.rdcMI);
+        if(d.wc)setWC(d.wc);
+        if(d.platform)setPlatform(d.platform);
+        zap('\u2713 Backup restored');
+      }catch(err){zap('\u26A0 Could not read backup file');}
+    };
+    reader.readAsText(file);
+    e.target.value='';
+  }
+
+  function addCreative(){
+    if(!newC.keyNumber||!newC.title)return;
+    setC(function(p){return p.concat([Object.assign({},newC,{id:Date.now()})]);});
+    setNewC(BLANK);setShowAdd(false);zap('✓ Creative added');
+  }
+
+  function updateCreativeField(id,field,value){
+    var oldKey='';
+    if(field==='keyNumber'){
+      for(var i=0;i<creatives.length;i++){if(creatives[i].id===id){oldKey=creatives[i].keyNumber;break;}}
+    }
+    setC(function(p){return p.map(function(x){return x.id===id?Object.assign({},x,{[field]:value}):x;});});
+    if(field==='keyNumber'&&oldKey&&oldKey!==value){
+      setRdcMI(function(prev){
+        var next={};
+        Object.keys(prev||{}).forEach(function(wk){
+          var week=prev[wk]||{}, weekCopy={};
+          Object.keys(week).forEach(function(day){
+            var dayCopy={};
+            Object.keys(week[day]||{}).forEach(function(dp){
+              dayCopy[dp]=(week[day][dp]||[]).map(function(sp){return sp&&sp.k===oldKey?Object.assign({},sp,{k:value}):sp;});
+            });
+            weekCopy[day]=dayCopy;
+          });
+          next[wk]=weekCopy;
+        });
+        return next;
+      });
+    }
+  }
+
+  function updateCreativeNetwork(id,net,checked){
+    setC(function(p){
+      return p.map(function(x){
+        if(x.id!==id) return x;
+        var nets=Object.assign({},BLANK_NETS,x.nets);
+        nets[net]=checked;
+        return Object.assign({},x,{nets:nets});
+      });
+    });
+  }
+
+  var inp={width:'100%',border:'1px solid #d1d5db',borderRadius:5,padding:'5px 8px',fontSize:12,boxSizing:'border-box'};
+  var editInp={width:'100%',border:'1px solid #d1d5db',borderRadius:4,padding:'3px 6px',fontSize:11,boxSizing:'border-box',backgroundColor:'#fff',color:'#111827'};
+  var lbl={fontSize:10,fontWeight:700,color:'#6b7280',marginBottom:3,display:'block',textTransform:'uppercase',letterSpacing:'0.04em'};
+
+  var curWeek=getCurWeek();
+  var rdcDayData=curWeek[rdcDay]||{};
+  var rdcDueDate=getDueDate(wc,DAYS.indexOf(rdcDay));
+
+  return (
+    <div style={{fontFamily:'system-ui,sans-serif',maxWidth:1350,margin:'0 auto',padding:'14px 16px',color:'#111827'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:14}}>
+        <div>
+          <div style={{fontSize:18,fontWeight:800,letterSpacing:'-0.3px'}}>PointsBet MI Planner</div>
+          <div style={{fontSize:11,color:'#6b7280',marginTop:2}}>Material Instructions · TV · Radio · RDC · {creatives.length} creatives</div>
+        </div>
+        {flash && <div style={{fontSize:12,color:'#059669',fontWeight:700,padding:'5px 12px',backgroundColor:'#dcfce7',borderRadius:6,border:'1px solid #86efac'}}>{flash}</div>}
+      </div>
+
+      <div style={{display:'flex',borderBottom:'2px solid #e5e7eb',marginBottom:16,flexWrap:'wrap'}}>
+        {[['planner','📋 Weekly Planner'],['library','🎬 Creative Library'],['outputs','📤 Network Outputs'],['rdcmi','📡 RDC MI'],['email','✉ Email Prep']].map(function(item){
+          return <button key={item[0]} onClick={function(){setTab(item[0]);}} style={{padding:'7px 14px',border:'none',background:'none',cursor:'pointer',fontWeight:tab===item[0]?700:400,color:tab===item[0]?'#1d4ed8':'#374151',borderBottom:tab===item[0]?'2px solid #1d4ed8':'2px solid transparent',marginBottom:-2,fontSize:13}}>{item[1]}</button>;
+        })}
+        <span style={{marginLeft:'auto',display:'inline-flex',gap:6,alignItems:'center'}}>
+          <button onClick={backupState} title="Download a JSON backup of all planner data" style={{padding:'4px 10px',border:'1px solid #d1d5db',borderRadius:5,background:'#fff',color:'#6b7280',fontSize:11,cursor:'pointer'}}>Backup</button>
+          <label style={{padding:'4px 10px',border:'1px solid #d1d5db',borderRadius:5,background:'#fff',color:'#6b7280',fontSize:11,cursor:'pointer'}}>Restore<input type="file" accept=".json" onChange={restoreState} style={{display:'none'}}/></label>
+        </span>
+      </div>
+
+      {tab==='planner' && (
+        <div>
+          <PlatformBar platform={platform} setPlatform={setPlatform} platformNets={platformNets}/>
+          {!loaded ? <div style={{padding:32,textAlign:'center',color:'#9ca3af'}}>Loading…</div> : (
+            <div>
+              <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:12,flexWrap:'wrap'}}>
+                <span style={{fontSize:13,fontWeight:600}}>Week Commencing:</span>
+                <input type="date" value={wc} onChange={function(e){setWC(e.target.value);}} style={{border:'1px solid #d1d5db',borderRadius:5,padding:'4px 8px',fontSize:13}}/>
+                <NetToggle val={planNet} onChange={function(k){setPlanNet(k);setActiveNote(null);}} nets={platformNets}/>
+                <span style={{fontSize:11,color:'#6b7280'}}>{fmt(wc)} – {fmt(wcEnd)}</span>
+                <button onClick={clearAllocations} style={{marginLeft:'auto',padding:'5px 14px',border:'1px solid '+(confirmClear?'#dc2626':'#fca5a5'),borderRadius:6,cursor:'pointer',fontSize:12,fontWeight:600,backgroundColor:confirmClear?'#dc2626':'#fff5f5',color:confirmClear?'#fff':'#dc2626'}}>{confirmClear?'⚠ Confirm — cannot be undone':'🗑 Clear All Allocations'}</button>
+              </div>
+              <div style={{display:'flex',gap:5,marginBottom:10,flexWrap:'wrap'}}>
+                {[['● Active','#fff','#374151','#e5e7eb'],['⚠ Expiring','#fef3c7','#92400e','#fde68a'],['✕ Expired','#f3f4f6','#9ca3af','#d1d5db'],['◷ Not yet live','#dbeafe','#1e40af','#bfdbfe'],['● Amber = note','#fffbeb','#92400e','#fde68a']].map(function(item){
+                  return <span key={item[0]} style={{fontSize:10,padding:'2px 8px',borderRadius:10,backgroundColor:item[1],color:item[2],border:'1px solid '+item[3]}}>{item[0]}</span>;
+                })}
+              </div>
+              <div style={{overflowX:'auto'}}>
+                <table style={{borderCollapse:'collapse',fontSize:12,width:'100%',tableLayout:'fixed'}}>
+                  <colgroup>
+                    <col style={{width:128}}/><col style={{width:175}}/><col style={{width:36}}/><col style={{width:66}}/><col style={{width:66}}/><col style={{width:62}}/>
+                    {DAYS.map(function(d){return <col key={d} style={{width:52}}/>;})}
+                  </colgroup>
+                  <thead><tr>
+                    <th style={TH}>Key Number</th><th style={TH}>Creative Title</th><th style={{...TH,textAlign:'center'}}>Dur</th><th style={TH}>Air Date</th><th style={TH}>End Date</th>
+                    <th style={{...TH,textAlign:'center',backgroundColor:'#e0f2fe',fontSize:10,lineHeight:1.2}}>ALL<br/>WEEK %</th>
+                    {DAY_L.map(function(l,i){return <th key={l} style={{...TH,textAlign:'center',fontSize:10,lineHeight:1.2}}>{l}<br/><span style={{fontWeight:400,color:'#6b7280'}}>{fmtShort(weekDates[i]||'')}</span></th>;})}
+                  </tr></thead>
+                  <tbody>
+                    {Object.keys(grouped).length===0
+                      ? <tr><td colSpan={13} style={{textAlign:'center',padding:24,color:'#9ca3af'}}>No active creatives for {(NETS.find(function(n){return n.k===planNet;})||{label:planNet}).label} this week.</td></tr>
+                      : <PlannerRows grouped={grouped} weekDates={weekDates} rots={rots} notes={notes} planNet={planNet} activeNote={activeNote} setActiveNote={setActiveNote} setRots={setRots} setNotes={setNotes}/>
+                    }
+                    <tr style={{borderTop:'2px solid #374151',backgroundColor:'#f9fafb'}}>
+                      <td colSpan={5} style={{...TD,textAlign:'right',fontWeight:700,fontSize:12}}>TOTAL PER DAY</td>
+                      <td style={{...TD,textAlign:'center',color:'#cbd5e1',fontSize:11}}>—</td>
+                      {DAYS.map(function(day){var t=dayTotals[day]||0,s=totStyle(t);return <td key={day} style={{...TD,textAlign:'center',fontWeight:800,fontSize:12,backgroundColor:s.bg,color:s.co}}>{t>0?t+'%':''}{t===100?' ✓':''}</td>;})}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div style={{display:'flex',gap:5,marginTop:10,flexWrap:'wrap'}}>
+                {DAY_L.map(function(l,i){var t=dayTotals[DAYS[i]]||0,s=totStyle(t);return <div key={l} style={{padding:'5px 10px',borderRadius:6,fontSize:11,fontWeight:700,backgroundColor:s.bg,color:s.co,border:'1px solid '+s.bo}}>{l}: {t>0?t+'%':'—'}{t===100?' ✓':''}</div>;})}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab==='library' && (
+        <div>
+          <PlatformBar platform={platform} setPlatform={setPlatform} platformNets={platformNets}/>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+            <span style={{fontSize:14,fontWeight:700}}>Creative Library <span style={{fontSize:12,color:'#6b7280',fontWeight:400}}>({creatives.length} creatives)</span></span>
+            <button onClick={function(){setShowAdd(function(v){return !v;});}} style={{backgroundColor:'#1d4ed8',color:'#fff',border:'none',borderRadius:6,padding:'6px 14px',fontSize:12,cursor:'pointer',fontWeight:700}}>+ Add Creative</button>
+          </div>
+          {showAdd && (
+            <div style={{backgroundColor:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:8,padding:14,marginBottom:14}}>
+              <div style={{fontSize:12,fontWeight:700,marginBottom:10}}>New Creative</div>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))',gap:8,marginBottom:8}}>
+                {[['Key Number','keyNumber','text'],['Title','title','text'],['Duration (s)','dur','number']].map(function(f){return(
+                  <div key={f[1]}><label style={lbl}>{f[0]}</label><input type={f[2]} value={newC[f[1]]} onChange={function(e){var v=e.target.value,k=f[1];setNewC(function(p){var u=Object.assign({},p);u[k]=v;return u;});}} style={inp}/></div>
+                );})}
+                <div><label style={lbl}>Category</label><select value={newC.cat} onChange={function(e){var v=e.target.value;setNewC(function(p){return Object.assign({},p,{cat:v});});}} style={inp}>{CATS.map(function(c){return <option key={c}>{c}</option>;})}</select></div>
+                <div><label style={lbl}>Air Date</label><input type="date" value={newC.air} onChange={function(e){var v=e.target.value;setNewC(function(p){return Object.assign({},p,{air:v});});}} style={inp}/></div>
+                <div><label style={lbl}>End Date (opt.)</label><input type="date" value={newC.end} onChange={function(e){var v=e.target.value;setNewC(function(p){return Object.assign({},p,{end:v});});}} style={inp}/></div>
+              </div>
+              {PLATFORMS.map(function(plat){return(
+                <div key={plat.k} style={{marginBottom:8}}>
+                  <div style={{fontSize:10,fontWeight:700,color:'#6b7280',textTransform:'uppercase',letterSpacing:'0.04em',marginBottom:4}}>{plat.label} Networks</div>
+                  <div style={{display:'flex',gap:14,flexWrap:'wrap'}}>
+                    {NETS.filter(function(n){return n.platform===plat.k;}).map(function(n){return(
+                      <label key={n.k} style={{fontSize:12,cursor:'pointer',display:'flex',alignItems:'center',gap:4}}>
+                        <input type="checkbox" checked={newC.nets[n.k]||false} onChange={function(e){var v=e.target.checked,k=n.k;setNewC(function(p){var nets=Object.assign({},p.nets);nets[k]=v;return Object.assign({},p,{nets:nets});});}}/>
+                        {n.label}{n.geo ? <span style={{fontSize:10,color:'#9ca3af',marginLeft:2}}>({n.geo})</span> : null}
+                      </label>
+                    );} )}
+                  </div>
+                </div>
+              );} )}
+              <div style={{display:'flex',gap:8,marginTop:8}}>
+                <button onClick={addCreative} style={{backgroundColor:'#1d4ed8',color:'#fff',border:'none',borderRadius:6,padding:'5px 12px',fontSize:12,cursor:'pointer',fontWeight:700}}>Add</button>
+                <button onClick={function(){setShowAdd(false);}} style={{backgroundColor:'#fff',color:'#374151',border:'1px solid #d1d5db',borderRadius:6,padding:'5px 12px',fontSize:12,cursor:'pointer'}}>Cancel</button>
+              </div>
+            </div>
+          )}
+          {CAT_ORDER.filter(function(cat){return !!allGrouped[cat];}).map(function(cat){return(
+            <div key={cat} style={{marginBottom:16}}>
+              <div style={{padding:'5px 10px',backgroundColor:CAT_COL[cat]+'18',borderLeft:'3px solid '+CAT_COL[cat],borderRadius:'0 4px 4px 0',marginBottom:5}}>
+                <span style={{fontSize:12,fontWeight:800,color:CAT_COL[cat],textTransform:'uppercase',letterSpacing:'0.05em'}}>{cat}</span>
+                <span style={{fontSize:11,color:'#6b7280',marginLeft:8}}>{allGrouped[cat].length} creative{allGrouped[cat].length!==1?'s':''}</span>
+              </div>
+              <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                <thead><tr>
+                  <th style={TH}>Status</th><th style={TH}>Key Number</th><th style={TH}>Title</th><th style={{...TH,textAlign:'center'}}>Dur</th>
+                  <th style={TH}>Air Date<br/><span style={{fontWeight:400,color:'#9ca3af',fontSize:9}}>blank = always</span></th>
+                  <th style={TH}>End Date<br/><span style={{fontWeight:400,color:'#9ca3af',fontSize:9}}>blank = ongoing</span></th>
+                  {allPlatNets.map(function(n){return <th key={n.k} style={{...TH,textAlign:'center'}}>{n.label}</th>;})}
+                  <th style={TH}></th>
+                </tr></thead>
+                <tbody>
+                  {allGrouped[cat].map(function(c){
+                    var ss=ST[cStatus(c)];
+                    return(
+                      <tr key={c.id} style={{backgroundColor:ss.bg,borderBottom:'1px solid #e5e7eb',color:ss.tx}}>
+                        <td style={TD}>{ss.badge?<span style={{fontSize:10,padding:'1px 6px',borderRadius:8,backgroundColor:'rgba(0,0,0,0.07)'}}>{ss.badge}</span>:<span style={{fontSize:10,color:'#16a34a',fontWeight:700}}>● Active</span>}</td>
+                        <td style={{...TD,padding:'4px 6px'}}><input type="text" value={c.keyNumber} onChange={function(e){updateCreativeField(c.id,'keyNumber',e.target.value);}} style={{...editInp,fontFamily:'monospace',fontWeight:700}}/></td>
+                        <td style={{...TD,padding:'4px 6px'}}><input type="text" value={c.title} onChange={function(e){updateCreativeField(c.id,'title',e.target.value);}} style={editInp}/></td>
+                        <td style={{...TD,padding:'4px 6px',textAlign:'center'}}><input type="number" min={0} value={c.dur} onChange={function(e){updateCreativeField(c.id,'dur',e.target.value);}} style={{...editInp,width:54,textAlign:'center'}}/></td>
+                        <td style={{...TD,padding:'4px 6px'}}><input type="date" value={c.air} onChange={function(e){updateCreativeField(c.id,'air',e.target.value);}} style={{...editInp,width:108}}/></td>
+                        <td style={{...TD,padding:'4px 6px'}}><input type="date" value={c.end} onChange={function(e){updateCreativeField(c.id,'end',e.target.value);}} style={{...editInp,width:108}}/></td>
+                        {allPlatNets.map(function(n){return <td key={n.k} style={{...TD,textAlign:'center'}}><input type="checkbox" checked={!!(c.nets&&c.nets[n.k])} onChange={function(e){updateCreativeNetwork(c.id,n.k,e.target.checked);}} aria-label={n.label+' network for '+c.keyNumber}/></td>;})}
+                        <td style={TD}><button onClick={function(){var id=c.id;setC(function(p){return p.filter(function(x){return x.id!==id;});});}} style={{fontSize:10,color:'#ef4444',background:'none',border:'none',cursor:'pointer'}}>Remove</button></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          );})}
+        </div>
+      )}
+
+      {tab==='outputs' && (
+        <div>
+          <PlatformBar platform={platform} setPlatform={setPlatform} platformNets={platformNets}/>
+          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:14,flexWrap:'wrap'}}>
+            <NetToggle val={outNet} onChange={setOutNet} nets={platformNets}/>
+            <button onClick={function(){var ok=exportCSV(outNet);if(ok)zap('✓ Exported '+(NETS.find(function(n){return n.k===outNet;})||{label:outNet}).label);}} style={{backgroundColor:'#059669',color:'#fff',border:'none',borderRadius:6,padding:'6px 14px',fontSize:12,cursor:'pointer',fontWeight:700}}>↓ Export CSV</button>
+            <span style={{fontSize:11,color:'#6b7280'}}>WC: {fmt(wc)}</span>
+          </div>
+          {outNet==='fox' && (
+            <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:12,padding:'10px 14px',backgroundColor:'#eff6ff',border:'1px solid #bfdbfe',borderRadius:8,flexWrap:'wrap'}}>
+              <div style={{flex:'1 1 280px'}}>
+                <div style={{fontSize:12,fontWeight:700,color:'#1d4ed8',marginBottom:2}}>📺 Fox Footy Spot-by-Spot Mapping</div>
+                <div style={{fontSize:11,color:'#1e40af'}}>Upload Fox's clear .xlsx — the tool applies your Fox rotation % for this week to assign creatives spot-by-spot (matched by duration) and downloads a completed file.</div>
+              </div>
+              <label style={{display:'inline-block',backgroundColor:'#1d4ed8',color:'#fff',padding:'8px 14px',borderRadius:6,cursor:'pointer',fontSize:12,fontWeight:700}}>
+                📂 Upload &amp; Generate
+                <input type="file" accept=".xlsx,.xls" onChange={handleFoxUpload} style={{display:'none'}}/>
+              </label>
+            </div>
+          )}
+          <div style={{backgroundColor:'#1d4ed8',color:'#fff',padding:'9px 14px',borderRadius:'6px 6px 0 0',fontSize:13,fontWeight:700}}>{(NETS.find(function(n){return n.k===outNet;})||{label:outNet}).label} — Material Instructions — WC {fmt(wc)}</div>
+          <div style={{overflowX:'auto'}}>
+            <table style={{borderCollapse:'collapse',fontSize:12,border:'1px solid #e5e7eb',width:'100%'}}>
+              <thead><tr>
+                <th style={TH}>Key Number</th><th style={TH}>Creative Title</th><th style={{...TH,textAlign:'center'}}>Dur</th><th style={TH}>Category</th>
+                {DAY_L.map(function(l,i){return <th key={l} style={{...TH,textAlign:'center',fontSize:10,lineHeight:1.2}}>{l}<br/><span style={{fontWeight:400,color:'#6b7280'}}>{fmtShort(weekDates[i]||'')}</span></th>;})}
+              </tr></thead>
+              <tbody>
+                {outRows(outNet).length===0
+                  ? <tr><td colSpan={11} style={{textAlign:'center',padding:24,color:'#9ca3af'}}>No creatives assigned this week.</td></tr>
+                  : outRows(outNet).map(function(r,i){return(
+                    <tr key={r.id} style={{backgroundColor:i%2===0?'#fff':'#f9fafb',borderBottom:'1px solid #e5e7eb'}}>
+                      <td style={{...TD,fontFamily:'monospace',fontWeight:700,fontSize:11}}>{r.keyNumber}</td>
+                      <td style={TD}>{r.title}</td><td style={{...TD,textAlign:'center'}}>:{r.dur}</td>
+                      <td style={TD}><CatBadge cat={r.cat}/></td>
+                      {DAYS.map(function(day,di){var en=dayEnabled(r,weekDates[di]||''),v=getDR(r.id,outNet,day),note=getNote(r.id,day);return(
+                        <td key={day} style={{...TD,textAlign:'center',backgroundColor:en?'transparent':'#f4f4f5'}}>
+                          {en?(<div><div style={{fontWeight:v?700:400,color:v?'#1d4ed8':'#9ca3af'}}>{v?v+'%':'0%'}</div>{note&&<div style={{fontSize:9,color:'#92400e',fontStyle:'italic'}}>{note}</div>}</div>):'—'}
+                        </td>
+                      );})}
+                    </tr>
+                  );})}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {tab==='rdcmi' && (
+        <div>
+          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:14,flexWrap:'wrap'}}>
+            <span style={{fontSize:13,fontWeight:600}}>Week Commencing:</span>
+            <input type="date" value={wc} onChange={function(e){setWC(e.target.value);}} style={{border:'1px solid #d1d5db',borderRadius:5,padding:'4px 8px',fontSize:13}}/>
+            <button onClick={rdcCopyFromLastWeek} style={{padding:'6px 14px',border:'1px solid #d1d5db',borderRadius:6,cursor:'pointer',fontSize:12,fontWeight:600,backgroundColor:'#fff',color:'#374151'}}>⟲ Copy from Last Week</button>
+            <button onClick={function(){exportRDCMI();}} style={{backgroundColor:'#059669',color:'#fff',border:'none',borderRadius:6,padding:'6px 14px',fontSize:12,cursor:'pointer',fontWeight:700}}>↓ Full Week</button>
+            <button onClick={function(){exportRDCMI(['sun','mon','tue'],'Sun-Tue');}} style={{backgroundColor:'#0369a1',color:'#fff',border:'none',borderRadius:6,padding:'6px 14px',fontSize:12,cursor:'pointer',fontWeight:700}}>↓ Sun–Tue</button>
+            <button onClick={function(){exportRDCMI(['wed','thu','fri','sat'],'Wed-Sat');}} style={{backgroundColor:'#0369a1',color:'#fff',border:'none',borderRadius:6,padding:'6px 14px',fontSize:12,cursor:'pointer',fontWeight:700}}>↓ Wed–Sat</button>
+            <button onClick={function(){exportRDCMI([rdcDay],DAY_L[DAYS.indexOf(rdcDay)]);}} style={{backgroundColor:'#fff',color:'#0369a1',border:'1px solid #0369a1',borderRadius:6,padding:'6px 14px',fontSize:12,cursor:'pointer',fontWeight:700}}>↓ {DAY_L[DAYS.indexOf(rdcDay)]} only</button>
+          </div>
+          <div style={{display:'flex',borderBottom:'2px solid #e5e7eb',marginBottom:16}}>
+            {DAYS.map(function(day,i){return(
+              <button key={day} onClick={function(){setRdcDay(day);}} style={{padding:'6px 12px',border:'none',background:'none',cursor:'pointer',fontSize:12,fontWeight:rdcDay===day?700:400,color:rdcDay===day?'#1d4ed8':'#374151',borderBottom:rdcDay===day?'2px solid #1d4ed8':'2px solid transparent',marginBottom:-2,lineHeight:1.3}}>
+                {DAY_L[i]}<br/><span style={{fontSize:10,fontWeight:400,color:'#6b7280'}}>{fmtShort(weekDates[i]||'')}</span>
+              </button>
+            );})}
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:14,flexWrap:'wrap'}}>
+            <span style={{fontSize:12,color:'#6b7280'}}><span style={{fontWeight:600,color:'#374151'}}>Due: </span>{fmtRDC(rdcDueDate)}</span>
+            <span style={{display:'inline-flex',alignItems:'center',gap:5,marginLeft:'auto'}}>
+              <span style={{fontSize:11,color:'#9ca3af'}}>Copy all timeslots into {DAY_L[DAYS.indexOf(rdcDay)]} from:</span>
+              <select value="" onChange={function(e){if(e.target.value){rdcCopyFromDay(rdcDay,e.target.value);e.target.value='';}}} style={{border:'1px solid #d1d5db',borderRadius:5,padding:'4px 7px',fontSize:11,backgroundColor:'#fff',color:'#374151',cursor:'pointer'}}>
+                <option value="">— another day —</option>
+                {DAYS.map(function(d,i){
+                  if(d===rdcDay) return null;
+                  var dd=(rdcMI[wc]&&rdcMI[wc][d])||{};
+                  var n=0; Object.keys(dd).forEach(function(k){n+=(dd[k]||[]).filter(function(s){return !!s.k;}).length;});
+                  if(!n) return null;
+                  return <option key={d} value={d}>{DAY_L[i]} ({n})</option>;
+                })}
+              </select>
+            </span>
+          </div>
+          {RDC_DAYPARTS.map(function(dp){
+            if(dp.daysOnly&&!dp.daysOnly.includes(rdcDay)) return null;
+            var spots=rdcDayData[dp.k]||[];
+            var dpKey=dp.k;
+            var copySources=RDC_DAYPARTS.filter(function(o){
+              if(o.k===dp.k) return false;
+              if(o.daysOnly&&!o.daysOnly.includes(rdcDay)) return false;
+              var os=(rdcDayData[o.k]||[]).filter(function(s){return !!s.k;});
+              return os.length>0;
+            }).map(function(o){return {k:o.k,label:o.label,count:(rdcDayData[o.k]||[]).filter(function(s){return !!s.k;}).length};});
+            return (
+              <RdcDaySection key={dp.k} dp={dp} rdcDay={rdcDay} spots={spots} creatives={creatives} weekDates={weekDates} rdcCreatives={rdcCreatives}
+                copySources={copySources}
+                onCopyFrom={function(srcK){rdcCopyFromDaypart(rdcDay,dpKey,srcK);}}
+                onAdd={function(){rdcAddSpot(rdcDay,dpKey);}}
+                onRemove={function(idx){rdcRemoveSpot(rdcDay,dpKey,idx);}}
+                onKey={function(idx,newKey){rdcUpdateKey(rdcDay,dpKey,idx,newKey);}}
+                onField={function(idx,field,val){rdcUpdateField(rdcDay,dpKey,idx,field,val);}}
+              />
+            );
+          })}
+        </div>
+      )}
+
+      {tab==='email' && (
+        <div style={{maxWidth:640}}>
+          <PlatformBar platform={platform} setPlatform={setPlatform} platformNets={platformNets}/>
+          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:14}}>
+            <NetToggle val={emailNet} onChange={setEmailNet} nets={allPlatNets}/>
+            <span style={{fontSize:11,color:'#6b7280'}}>WC: {fmt(wc)}</span>
+          </div>
+          {emailNet==='rdc' && <div style={{backgroundColor:'#f0f9ff',border:'1px solid #bae6fd',borderRadius:6,padding:'8px 12px',marginBottom:12,fontSize:12,color:'#0369a1'}}>RDC uses the daypart MI format — "Prepare Email" exports the RDC MI (not a rotation CSV).</div>}
+          {!(emailConfig[emailNet]&&emailConfig[emailNet].to) && <div style={{backgroundColor:'#fffbeb',border:'1px solid #fde68a',borderRadius:6,padding:'8px 12px',marginBottom:12,fontSize:12,color:'#92400e'}}>⚠ No To address set — add one below.</div>}
+          <div style={{backgroundColor:'#f0f9ff',border:'1px solid #bae6fd',borderRadius:6,padding:'8px 12px',marginBottom:14,fontSize:12,color:'#0369a1'}}><strong>[WC_DATE]</strong> will be replaced with <strong>{fmt(wc)}</strong>. Templates save automatically.</div>
+          <div style={{display:'grid',gap:12,marginBottom:14}}>
+            {[['To','to'],['CC (optional)','cc'],['Subject','subject']].map(function(f){return(
+              <div key={f[1]}>
+                <label style={lbl}>{f[0]}</label>
+                <input value={(emailConfig[emailNet]&&emailConfig[emailNet][f[1]])||''} onChange={function(e){var v=e.target.value,k=f[1],net=emailNet;setEmailConfig(function(p){var u=Object.assign({},p);u[net]=Object.assign({},u[net]);u[net][k]=v;return u;});}} style={inp}/>
+                {f[1]==='to' && <div style={{fontSize:10,color:'#9ca3af',marginTop:2}}>Separate multiple addresses with commas</div>}
+              </div>
+            );})}
+            <div>
+              <label style={lbl}>Body</label>
+              <textarea value={(emailConfig[emailNet]&&emailConfig[emailNet].body)||''} onChange={function(e){var v=e.target.value,net=emailNet;setEmailConfig(function(p){var u=Object.assign({},p);u[net]=Object.assign({},u[net]);u[net].body=v;return u;});}} style={{...inp,height:140,resize:'vertical',fontFamily:'system-ui,sans-serif',lineHeight:1.5}}/>
+            </div>
+          </div>
+          <div style={{display:'flex',gap:10,alignItems:'center',marginBottom:16}}>
+            <button onClick={function(){prepareEmail(emailNet);}} style={{backgroundColor:'#1d4ed8',color:'#fff',border:'none',borderRadius:6,padding:'8px 18px',fontSize:13,cursor:'pointer',fontWeight:700}}>✉ Prepare Email &amp; Download {emailNet==='rdc'?'RDC MI':'CSV'}</button>
+            <button onClick={function(){var net=emailNet;setEmailConfig(function(p){var u=Object.assign({},p);u[net]=Object.assign({},DEFAULT_EMAILS[net]);return u;});}} style={{backgroundColor:'#fff',color:'#6b7280',border:'1px solid #d1d5db',borderRadius:6,padding:'8px 12px',fontSize:12,cursor:'pointer'}}>Reset to default</button>
+          </div>
+          <div style={{backgroundColor:'#fff',border:'1px solid #e5e7eb',borderRadius:8,padding:14,marginBottom:16}}>
+            <div style={{fontSize:11,fontWeight:700,color:'#374151',marginBottom:4,textTransform:'uppercase',letterSpacing:'0.05em'}}>Quick Rotation Change</div>
+            <div style={{fontSize:11,color:'#9ca3af',marginBottom:10}}>Mid-week creative swap: tick the key numbers and send a "rotate these evenly" email to {(NETS.find(function(n){return n.k===emailNet;})||{label:emailNet}).label}.</div>
+            <div style={{display:'grid',gap:4,maxHeight:220,overflow:'auto',marginBottom:10}}>
+              {active.filter(function(c){return c.nets&&c.nets[emailNet];}).sort(function(a,b){var ai=CAT_ORDER.indexOf(a.cat),bi=CAT_ORDER.indexOf(b.cat);if(ai!==bi)return ai-bi;return a.keyNumber<b.keyNumber?-1:1;}).map(function(c){
+                return (
+                  <label key={c.keyNumber} style={{display:'flex',alignItems:'center',gap:8,fontSize:12,cursor:'pointer',padding:'2px 4px'}}>
+                    <input type="checkbox" checked={!!rotSel[c.keyNumber]} onChange={function(e){var k=c.keyNumber,v=e.target.checked;setRotSel(function(p){var u=Object.assign({},p);u[k]=v;return u;});}}/>
+                    <span style={{fontFamily:'monospace',fontWeight:700,fontSize:11}}>{c.keyNumber}</span>
+                    <CatBadge cat={c.cat}/>
+                    <span style={{color:'#6b7280'}}>{stripDur(c.title)} :{c.dur}</span>
+                  </label>
+                );
+              })}
+            </div>
+            <button onClick={sendRotationEmail} style={{backgroundColor:'#111827',color:'#fff',border:'none',borderRadius:6,padding:'7px 16px',fontSize:12,cursor:'pointer',fontWeight:700}}>✉ Send Rotation Update</button>
+          </div>
+          <div style={{backgroundColor:'#f9fafb',border:'1px solid #e5e7eb',borderRadius:8,padding:14}}>
+            <div style={{fontSize:11,fontWeight:700,color:'#374151',marginBottom:10,textTransform:'uppercase',letterSpacing:'0.05em'}}>Preview</div>
+            <div style={{fontSize:12,display:'grid',gap:4}}>
+              <div><span style={{color:'#6b7280',fontWeight:600}}>To: </span>{(emailConfig[emailNet]&&emailConfig[emailNet].to)||<span style={{color:'#d1d5db'}}>Not set</span>}</div>
+              {emailConfig[emailNet]&&emailConfig[emailNet].cc&&<div><span style={{color:'#6b7280',fontWeight:600}}>CC: </span>{emailConfig[emailNet].cc}</div>}
+              <div style={{marginTop:4}}><span style={{color:'#6b7280',fontWeight:600}}>Subject: </span><strong>{((emailConfig[emailNet]&&emailConfig[emailNet].subject)||'').replace(/\[WC_DATE\]/g,fmt(wc))}</strong></div>
+              <div style={{marginTop:8,paddingTop:10,borderTop:'1px solid #e5e7eb',whiteSpace:'pre-wrap',fontSize:12,color:'#374151',lineHeight:1.6}}>{((emailConfig[emailNet]&&emailConfig[emailNet].body)||'').replace(/\[WC_DATE\]/g,fmt(wc))}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {foxModal && (
+        <div onClick={function(){setFoxModal(null);}} style={{position:'fixed',top:0,left:0,right:0,bottom:0,backgroundColor:'rgba(0,0,0,0.4)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:1000,padding:16}}>
+          <div onClick={function(e){e.stopPropagation();}} style={{backgroundColor:'#fff',borderRadius:10,maxWidth:520,width:'100%',maxHeight:'80vh',overflow:'auto',boxShadow:'0 10px 40px rgba(0,0,0,0.2)'}}>
+            <div style={{padding:'14px 18px',borderBottom:'1px solid #e5e7eb',fontSize:14,fontWeight:800,color:'#111827'}}>{foxModal.title}</div>
+            <div style={{padding:'14px 18px',fontSize:13,color:'#374151',lineHeight:1.5}}>{foxModal.body}</div>
+            {foxModal.issues&&foxModal.issues.length>0 && (
+              <div style={{padding:'0 18px 14px'}}>
+                <div style={{fontSize:11,fontWeight:700,color:'#92400e',marginBottom:6,textTransform:'uppercase',letterSpacing:'0.04em'}}>Unassigned</div>
+                <ul style={{margin:0,paddingLeft:18,fontSize:12,color:'#92400e'}}>
+                  {foxModal.issues.map(function(it,i){return <li key={i} style={{marginBottom:3}}>{it}</li>;})}
+                </ul>
+              </div>
+            )}
+            <div style={{padding:'12px 18px',borderTop:'1px solid #e5e7eb',textAlign:'right'}}>
+              <button onClick={function(){setFoxModal(null);}} style={{backgroundColor:'#1d4ed8',color:'#fff',border:'none',borderRadius:6,padding:'7px 18px',fontSize:13,cursor:'pointer',fontWeight:700}}>Got it</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
