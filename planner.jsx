@@ -1427,13 +1427,11 @@ function App() {
           {!(emailConfig[emailNet]&&emailConfig[emailNet].to) && <div style={{backgroundColor:'#fffbeb',border:'1px solid #fde68a',borderRadius:6,padding:'8px 12px',marginBottom:12,fontSize:12,color:'#92400e'}}>⚠ No To address set — add one below.</div>}
           <div style={{backgroundColor:'#f0f9ff',border:'1px solid #bae6fd',borderRadius:6,padding:'8px 12px',marginBottom:14,fontSize:12,color:'#0369a1'}}><strong>[WC_DATE]</strong> will be replaced with <strong>{fmt(wc)}</strong>. Templates save automatically.</div>
           <div style={{display:'grid',gap:12,marginBottom:14}}>
-            {[['To','to'],['CC (optional)','cc'],['Subject','subject']].map(function(f){return(
-              <div key={f[1]}>
-                <label style={lbl}>{f[0]}</label>
-                <input value={(emailConfig[emailNet]&&emailConfig[emailNet][f[1]])||''} onChange={function(e){var v=e.target.value,k=f[1],net=emailNet;setEmailConfig(function(p){var u=Object.assign({},p);u[net]=Object.assign({},u[net]);u[net][k]=v;return u;});}} style={inp}/>
-                {f[1]==='to' && <div style={{fontSize:10,color:'#9ca3af',marginTop:2}}>Separate multiple addresses with commas</div>}
-              </div>
-            );})}
+            <ContactEditor net={emailNet} cfg={emailConfig[emailNet]} onSave={function(to,cc){var net=emailNet;setEmailConfig(function(p){var u=Object.assign({},p);u[net]=Object.assign({},u[net]);u[net].to=to;u[net].cc=cc;return u;});}}/>
+            <div>
+              <label style={lbl}>Subject</label>
+              <input value={(emailConfig[emailNet]&&emailConfig[emailNet].subject)||''} onChange={function(e){var v=e.target.value,net=emailNet;setEmailConfig(function(p){var u=Object.assign({},p);u[net]=Object.assign({},u[net]);u[net].subject=v;return u;});}} style={inp}/>
+            </div>
             <div>
               <label style={lbl}>Body</label>
               <textarea value={(emailConfig[emailNet]&&emailConfig[emailNet].body)||''} onChange={function(e){var v=e.target.value,net=emailNet;setEmailConfig(function(p){var u=Object.assign({},p);u[net]=Object.assign({},u[net]);u[net].body=v;return u;});}} style={{...inp,height:140,resize:'vertical',fontFamily:'system-ui,sans-serif',lineHeight:1.5}}/>
