@@ -344,6 +344,44 @@ function RdcDaySection(props) {
   );
 }
 
+function ContactEditor(props){
+  var net=props.net, cfg=props.cfg||{}, onSave=props.onSave;
+  var st=useState([]), rows=st[0], setRows=st[1];
+  useEffect(function(){
+    var r=[];
+    (cfg.to||'').split(',').forEach(function(e){e=e.trim();if(e)r.push({email:e,role:'to'});});
+    (cfg.cc||'').split(',').forEach(function(e){e=e.trim();if(e)r.push({email:e,role:'cc'});});
+    setRows(r.length?r:[{email:'',role:'to'}]);
+  },[net]);
+  function commit(next){
+    setRows(next);
+    var to=next.filter(function(x){return x.role==='to'&&x.email.trim();}).map(function(x){return x.email.trim();}).join(',');
+    var cc=next.filter(function(x){return x.role==='cc'&&x.email.trim();}).map(function(x){return x.email.trim();}).join(',');
+    onSave(to,cc);
+  }
+  return (
+    <div>
+      <label style={{fontSize:11,fontWeight:700,color:'#374151',display:'block',marginBottom:6}}>Recipients</label>
+      <div style={{display:'grid',gap:6}}>
+        {rows.map(function(r,i){
+          return (
+            <div key={i} style={{display:'flex',gap:6,alignItems:'center'}}>
+              <input value={r.email} placeholder="name@network.com.au" onChange={function(e){var v=e.target.value,next=rows.slice();next[i]=Object.assign({},next[i],{email:v});commit(next);}} style={{flex:1,border:'1px solid #d1d5db',borderRadius:5,padding:'6px 8px',fontSize:12}}/>
+              <select value={r.role} onChange={function(e){var v=e.target.value,next=rows.slice();next[i]=Object.assign({},next[i],{role:v});commit(next);}} style={{border:'1px solid #d1d5db',borderRadius:5,padding:'6px 6px',fontSize:12,backgroundColor:r.role==='to'?'#eff6ff':'#f9fafb'}}>
+                <option value="to">To</option>
+                <option value="cc">CC</option>
+              </select>
+              <button onClick={function(){var next=rows.filter(function(_,j){return j!==i;});commit(next.length?next:[{email:'',role:'to'}]);}} title="Remove" style={{border:'1px solid #e5e7eb',background:'#fff',color:'#9ca3af',borderRadius:5,padding:'5px 9px',fontSize:12,cursor:'pointer'}}>\u2715</button>
+            </div>
+          );
+        })}
+      </div>
+      <button onClick={function(){commit(rows.concat([{email:'',role:'to'}]));}} style={{marginTop:8,border:'1px dashed #93c5fd',background:'#fff',color:'#1d4ed8',borderRadius:5,padding:'5px 12px',fontSize:12,cursor:'pointer',fontWeight:600}}>+ Add person</button>
+      <div style={{fontSize:10,color:'#9ca3af',marginTop:4}}>First "To" person\u2019s name is used for the email greeting and rotation updates.</div>
+    </div>
+  );
+}
+
 function App() {
   var stTab=useState('send'), tab=stTab[0], setTab=stTab[1];
   var stPlatform=useState('tv'), platform=stPlatform[0], setPlatform=stPlatform[1];
