@@ -872,7 +872,10 @@ function App() {
     if(ccList.length)params.push('cc='+encodeURIComponent(ccList.join(',')));
     var subj=(cfg.subject||'').replace(/\[WC_DATE\]/g,d)+(opts.label?' ('+opts.label+')':'');
     params.push('subject='+encodeURIComponent(subj));
-    params.push('body='+encodeURIComponent((cfg.body||'').replace(/\[WC_DATE\]/g,d)));
+    var pending=active.filter(function(c){return c.nets&&c.nets[net]&&c.mat&&c.mat!=='ok';}).map(function(c){return c.keyNumber;});
+    var bodyTxt=(cfg.body||'').replace(/\[WC_DATE\]/g,d);
+    if(pending.length){bodyTxt=bodyTxt.replace(/\n\nRegards\s*$/,'')+'\n\nThe following material will be fed through: '+pending.join(', ')+'.\n\nRegards';}
+    params.push('body='+encodeURIComponent(bodyTxt));
     var toList=(cfg.to||'').split(',').map(function(s){return s.trim();}).filter(function(s){return !!s;});
     var ma=document.createElement('a');
     ma.href='mailto:'+toList.join(',')+(params.length?'?'+params.join('&'):'');
@@ -945,7 +948,22 @@ function App() {
     var firstName=(cfg.to.split(',')[0].split('@')[0].split('.')[0]||'');
     firstName=firstName.charAt(0).toUpperCase()+firstName.slice(1);
     var nl=(NETS.find(function(n){return n.k===emailNet;})||{label:emailNet}).label;
-    var body='Hi '+firstName+',\n\nCan we rotate the below evenly through our booked spots please?\n\n'+keys.join('\n')+'\n\nThanks!';
+    var lines=[],anyPct=false,anyBlank=false;
+    keys.forEach(function(k){
+      var cr=creatives.find(function(c){return c.keyNumber===k;});
+      var v='';
+      if(cr&&rots[cr.id]&&rots[cr.id][emailNet]){
+        var em={};
+        DAYS.forEach(function(d,i){ em[d]=dayEnabled(cr,weekDates[i]||''); });
+        var ws=weeklyState(rots[cr.id][emailNet],em);
+        if(ws.mix){v='varies by day';anyPct=true;}
+        else if(ws.val!==''){v=ws.val+'%';anyPct=true;}
+      }
+      if(!v)anyBlank=true;
+      lines.push(k+(v?' - '+v:''));
+    });
+    var ask=anyPct?'For the below spots can we go with this rotation please?':'Can we rotate the below evenly through our booked spots please?';
+    var body='Hi '+firstName+',\n\n'+ask+'\n\n'+lines.join('\n')+(anyPct&&anyBlank?'\n\nAny spots without a percentage can be split evenly.':'')+'\n\nThanks!';
     var params=[];
     var ccList=(cfg.cc||'').split(',').map(function(x){return x.trim();}).filter(function(x){return !!x;});
     if(ccList.length)params.push('cc='+encodeURIComponent(ccList.join(',')));
@@ -1083,7 +1101,7 @@ function App() {
               });
               updated++;
             } else {
-              next.push({id:Date.now()+Math.floor(Math.random()*100000),keyNumber:item.keyNumber,title:item.title||item.keyNumber,dur:String(item.dur||'30'),cat:CATS.indexOf(item.cat)>=0?item.cat:'Other',air:item.air||'',end:item.end||'',nets:nets});
+              next.push({id:Date.now()+Math.floor(Math.random()*100000),keyNumber:item.keyNumber,title:item.title||item.keyNumber,dur:String(item.dur||'30'),cat:CATS.indexOf(item.cat)>=0?item.cat:'Other',air:item.air||'',end:item.end||'',mat:item.mat||'ok',nets:nets});
               added++;
             }
           });
@@ -1199,7 +1217,7 @@ function App() {
                 return (
                   <tr key={row.k} style={{borderTop:'1px solid #e5e7eb',backgroundColor:sent?'#f8fafc':'#fff'}}>
                     <td style={{...TD,fontWeight:700,fontSize:12}}>{row.label}</td>
-                    <td style={{...TD,fontSize:11,color:cfg.to?'#374151':'#dc2626'}}>{cfg.to||'No address set — add in Email Prep'}</td>
+                    <td style={{...TD,fontSize:11,color:cfg.to?'#374151':'#dc2626'}}>{cfg.to||'No address set — add in Email Prep'}{(function(){var pend=active.filter(function(c){return c.nets&&c.nets[row.net]&&c.mat&&c.mat!=='ok';});return pend.length?<div style={{color:'#b45309',fontSize:10,marginTop:2}}>⚠ {pend.length} key{pend.length>1?'s':''} awaiting material: {pend.map(function(c){return c.keyNumber;}).join(', ')}</div>:null;})()}</td>
                     <td style={{...TD,textAlign:'center',fontSize:12}}>{fmt(rowDue(row))}</td>
                     <td style={{...TD,textAlign:'center'}}>
                       <input type="number" min={0} max={14} value={dueOv[row.k]!=null?dueOv[row.k]:row.defOff} onChange={function(e){var v=e.target.value,k=row.k;setDueOv(function(p){var u=Object.assign({},p);u[k]=v;return u;});}} style={{width:46,textAlign:'center',border:'1px solid #d1d5db',borderRadius:4,padding:'2px',fontSize:12}}/>
@@ -1244,7 +1262,7 @@ function App() {
                     {DAYS.map(function(d){return <col key={d} style={{width:52}}/>;})}
                   </colgroup>
                   <thead><tr>
-                    <th style={TH}>Key Number</th><th style={TH}>Creative Title</th><th style={{...TH,textAlign:'center'}}>Dur</th><th style={TH}>Air Date</th><th style={TH}>End Date</th>
+                    <th style={TH}>Key Number</th><th style={TH}>Creative Title</th><th style={{...TH,textAlign:'center'}}>Dur</th><th style={TH}>Air Date</th><th style={TH}>End Date</th><th style={{...TH,textAlign:'center'}}>Material</th>
                     <th style={{...TH,textAlign:'center',backgroundColor:'#e0f2fe',fontSize:10,lineHeight:1.2}}>ALL<br/>WEEK %</th>
                     {DAY_L.map(function(l,i){return <th key={l} style={{...TH,textAlign:'center',fontSize:10,lineHeight:1.2}}>{l}<br/><span style={{fontWeight:400,color:'#6b7280'}}>{fmtShort(weekDates[i]||'')}</span></th>;})}
                   </tr></thead>
@@ -1335,6 +1353,13 @@ function App() {
                         <td style={{...TD,padding:'4px 6px',textAlign:'center'}}><input type="number" min={0} value={c.dur} onChange={function(e){updateCreativeField(c.id,'dur',e.target.value);}} style={{...editInp,width:54,textAlign:'center'}}/></td>
                         <td style={{...TD,padding:'4px 6px'}}><input type="date" value={c.air} onChange={function(e){updateCreativeField(c.id,'air',e.target.value);}} style={{...editInp,width:108}}/></td>
                         <td style={{...TD,padding:'4px 6px'}}><input type="date" value={c.end} onChange={function(e){updateCreativeField(c.id,'end',e.target.value);}} style={{...editInp,width:108}}/></td>
+                        <td style={{...TD,padding:'4px 6px',textAlign:'center'}}>
+                          <select value={c.mat||'ok'} onChange={function(e){updateCreativeField(c.id,'mat',e.target.value);}} style={{...editInp,width:96,backgroundColor:(c.mat==='missing'?'#fee2e2':(c.mat==='feeding'?'#fef3c7':'#f0fdf4')),fontWeight:600}}>
+                            <option value="ok">Delivered</option>
+                            <option value="feeding">Feeding thru</option>
+                            <option value="missing">Not arrived</option>
+                          </select>
+                        </td>
                         {allPlatNets.map(function(n){return <td key={n.k} style={{...TD,textAlign:'center'}}><input type="checkbox" checked={!!(c.nets&&c.nets[n.k])} onChange={function(e){updateCreativeNetwork(c.id,n.k,e.target.checked);}} aria-label={n.label+' network for '+c.keyNumber}/></td>;})}
                         <td style={TD}><button onClick={function(){var id=c.id;setC(function(p){return p.filter(function(x){return x.id!==id;});});}} style={{fontSize:10,color:'#ef4444',background:'none',border:'none',cursor:'pointer'}}>Remove</button></td>
                       </tr>
