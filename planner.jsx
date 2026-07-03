@@ -54,6 +54,7 @@ function ordinal(n){ var s=['th','st','nd','rd'],v=n%100; return n+(s[(v-20)%10]
 var FULL_DAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 var MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 function fmtRDC(ds){ if(!ds) return ''; var d=new Date(ds+'T00:00:00'); return FULL_DAYS[d.getDay()]+' '+ordinal(d.getDate())+' '+MONTH_NAMES[d.getMonth()]+' '+d.getFullYear(); }
+function addDaysISO(iso,n){ var d=new Date(iso+'T00:00:00'); d.setDate(d.getDate()+n); var y=d.getFullYear(),m=('0'+(d.getMonth()+1)).slice(-2),dd=('0'+d.getDate()).slice(-2); return y+'-'+m+'-'+dd; }
 function getDueDate(wcStr,di){ var d=new Date(wcStr+'T00:00:00'); d.setDate(d.getDate()+(di<=2?-4:-2)); return d.toISOString().split('T')[0]; }
 function stripDur(t){ return t?t.replace(/\s*:?\d+s?\s*$/,'').trim():''; }
 function getXLSX(){ return (typeof window!=='undefined'&&window.__xlsxStyleLoaded&&window.XLSX)?window.XLSX:XLSX_NPM; }
@@ -293,6 +294,7 @@ function RdcDaySection(props) {
                   <td style={{...TD,padding:'4px 8px'}}>
                     <select value={spot.k} onChange={function(e){onKey(siCopy,e.target.value);}} style={{width:'100%',border:'1px solid #d1d5db',borderRadius:4,padding:'3px 6px',fontSize:11,backgroundColor:'#fff'}}>
                       <option value="">— Select creative —</option>
+                      {spot.k&&!rdcCreatives.some(function(rc){return rc.keyNumber===spot.k;})&&<option value={spot.k}>[Expired] {spot.k}{c?' — '+stripDur(c.title):''}</option>}
                       {rdcCreatives.slice().sort(function(a,b){var ai=CAT_ORDER.indexOf(a.cat),bi=CAT_ORDER.indexOf(b.cat);if(ai!==bi)return ai-bi;return a.keyNumber<b.keyNumber?-1:1;}).map(function(rc){
                         return <option key={rc.keyNumber} value={rc.keyNumber}>[{rc.cat}] {rc.keyNumber} — {stripDur(rc.title)}</option>;
                       })}
@@ -338,7 +340,7 @@ function RdcDaySection(props) {
 }
 
 function App() {
-  var stTab=useState('planner'), tab=stTab[0], setTab=stTab[1];
+  var stTab=useState('send'), tab=stTab[0], setTab=stTab[1];
   var stPlatform=useState('tv'), platform=stPlatform[0], setPlatform=stPlatform[1];
   var stC=useState(DEFAULTS), creatives=stC[0], setC=stC[1];
   var stWC=useState(currentWeekSunday()), wc=stWC[0], setWC=stWC[1];
@@ -357,6 +359,10 @@ function App() {
   var stFlash=useState(''), flash=stFlash[0], setFlash=stFlash[1];
   var stConfirmClear=useState(false), confirmClear=stConfirmClear[0], setConfirmClear=stConfirmClear[1];
   var stFoxModal=useState(null), foxModal=stFoxModal[0], setFoxModal=stFoxModal[1];
+  var stShowExp=useState(false), showExpired=stShowExp[0], setShowExpired=stShowExp[1];
+  var stSent=useState({}), sentMap=stSent[0], setSentMap=stSent[1];
+  var stDueOv=useState({}), dueOv=stDueOv[0], setDueOv=stDueOv[1];
+  function isExpired(c){ return !!(c.end&&c.end<TODAY); }
 
   useEffect(function(){
     (async function(){
@@ -374,6 +380,9 @@ function App() {
           var r4=await window.storage.get('mi_notes').catch(function(){return null;});if(r4&&r4.value){try{setNotes(JSON.parse(r4.value));}catch(e){}}
           var r5=await window.storage.get('mi_emails2').catch(function(){return null;});if(r5&&r5.value){try{setEmailConfig(Object.assign({},DEFAULT_EMAILS,JSON.parse(r5.value)));}catch(e){}}
           var r6=await window.storage.get('mi_platform').catch(function(){return null;});if(r6&&r6.value)setPlatform(r6.value);
+          var r8=await window.storage.get('mi_showexp').catch(function(){return null;});if(r8&&r8.value==='1')setShowExpired(true);
+          var r9=await window.storage.get('mi_sent').catch(function(){return null;});if(r9&&r9.value){try{setSentMap(JSON.parse(r9.value));}catch(e){}}
+          var r10=await window.storage.get('mi_dueov').catch(function(){return null;});if(r10&&r10.value){try{setDueOv(JSON.parse(r10.value));}catch(e){}}
           var r7=await window.storage.get('mi_rdcmi').catch(function(){return null;});if(r7&&r7.value){try{var rd=JSON.parse(r7.value);Object.keys(rd).forEach(function(wk){var wd=rd[wk];if(!wd)return;DAYS.forEach(function(dy){if(!wd[dy])return;Object.keys(wd[dy]).forEach(function(dpk){(wd[dy][dpk]||[]).forEach(function(sp){if(sp&&sp.q==null){var m=String(sp.i||'').match(/(\d+)\s*x/i);if(m){sp.q=m[1];sp.i=String(sp.i).replace(/^\s*\d+\s*x\s*\d*\s*secs?\s*/i,'').replace(/^[\s—-]+/,'').trim();}else if(sp.k){sp.q='1';}}});});});});setRdcMI(rd);}catch(e){}}
         }
       }catch(e){}
@@ -387,6 +396,9 @@ function App() {
   useEffect(function(){ if(loaded) window.storage.set('mi_notes',JSON.stringify(notes)).catch(function(){}); },[notes,loaded]);
   useEffect(function(){ if(loaded) window.storage.set('mi_emails2',JSON.stringify(emailConfig)).catch(function(){}); },[emailConfig,loaded]);
   useEffect(function(){ if(loaded) window.storage.set('mi_platform',platform).catch(function(){}); },[platform,loaded]);
+  useEffect(function(){ if(loaded) window.storage.set('mi_showexp',showExpired?'1':'0').catch(function(){}); },[showExpired,loaded]);
+  useEffect(function(){ if(loaded) window.storage.set('mi_sent',JSON.stringify(sentMap)).catch(function(){}); },[sentMap,loaded]);
+  useEffect(function(){ if(loaded) window.storage.set('mi_dueov',JSON.stringify(dueOv)).catch(function(){}); },[dueOv,loaded]);
   useEffect(function(){ if(loaded) window.storage.set('mi_rdcmi',JSON.stringify(rdcMI)).catch(function(){}); },[rdcMI,loaded]);
 
   // Load xlsx-js-style (styled fork) from CDN so exports can carry cell colours/borders.
@@ -420,15 +432,16 @@ function App() {
 
   var grouped = useMemo(function(){
     var g={};
-    CAT_ORDER.forEach(function(cat){var it=active.filter(function(c){return c.cat===cat&&c.nets&&c.nets[planNet];});if(it.length)g[cat]=it;});
+    CAT_ORDER.forEach(function(cat){var it=active.filter(function(c){return c.cat===cat&&c.nets&&c.nets[planNet]&&(showExpired||!isExpired(c));});if(it.length)g[cat]=it;});
     return g;
-  },[active,planNet]);
+  },[active,planNet,showExpired]);
 
+  var expiredCount = useMemo(function(){return creatives.filter(function(c){return isExpired(c);}).length;},[creatives]);
   var allGrouped = useMemo(function(){
     var g={};
-    CAT_ORDER.forEach(function(cat){var it=creatives.filter(function(c){return c.cat===cat;});if(it.length)g[cat]=it;});
+    CAT_ORDER.forEach(function(cat){var it=creatives.filter(function(c){return c.cat===cat&&(showExpired||!isExpired(c));});if(it.length)g[cat]=it;});
     return g;
-  },[creatives]);
+  },[creatives,showExpired]);
 
   function outRows(net){ return active.filter(function(c){return c.nets&&c.nets[net]&&DAYS.some(function(d){return !!getDR(c.id,net,d);});}); }
 
@@ -438,7 +451,7 @@ function App() {
     return t;
   },[active,planNet,rots,weekDates]);
 
-  var rdcCreatives = useMemo(function(){return creatives.filter(function(c){return c.nets&&c.nets.rdc;});},[creatives]);
+  var rdcCreatives = useMemo(function(){return creatives.filter(function(c){return c.nets&&c.nets.rdc&&(showExpired||!isExpired(c));});},[creatives,showExpired]);
 
   function zap(msg){ setFlash(msg); setTimeout(function(){setFlash('');},2500); }
 
@@ -802,8 +815,9 @@ function App() {
     }catch(e){zap('⚠ Export failed');return false;}
   }
 
-  function prepareEmail(net){
-    var ok=net==='rdc'?exportRDCMI():exportCSV(net);
+  function prepareEmail(net,opts){
+    opts=opts||{};
+    var ok=net==='rdc'?exportRDCMI(opts.subset,opts.suffix):exportCSV(net);
     if(!ok) return;
     var cfg=emailConfig[net];
     if(!cfg||!cfg.to){zap('⚠ Add a To address in Email Prep first');return;}
@@ -811,7 +825,8 @@ function App() {
     var params=[];
     var ccList=(cfg.cc||'').split(',').map(function(s){return s.trim();}).filter(function(s){return !!s;});
     if(ccList.length)params.push('cc='+encodeURIComponent(ccList.join(',')));
-    params.push('subject='+encodeURIComponent((cfg.subject||'').replace(/\[WC_DATE\]/g,d)));
+    var subj=(cfg.subject||'').replace(/\[WC_DATE\]/g,d)+(opts.label?' ('+opts.label+')':'');
+    params.push('subject='+encodeURIComponent(subj));
     params.push('body='+encodeURIComponent((cfg.body||'').replace(/\[WC_DATE\]/g,d)));
     var toList=(cfg.to||'').split(',').map(function(s){return s.trim();}).filter(function(s){return !!s;});
     var ma=document.createElement('a');
@@ -821,6 +836,61 @@ function App() {
   }
 
   var stRotSel=useState({}), rotSel=stRotSel[0], setRotSel=stRotSel[1];
+
+  var SEND_ROWS=[
+    {k:'fox',      net:'fox',     label:'Fox Footy',        defOff:2},
+    {k:'espn',     net:'espn',    label:'ESPN / Disney',    defOff:2},
+    {k:'rdc_early',net:'rdc',     label:'RDC — Sun–Tue',    defOff:4, subset:['sun','mon','tue'],       suffix:'Sun-Tue', emailLabel:'Sun–Tue'},
+    {k:'rdc_late', net:'rdc',     label:'RDC — Wed–Sat',    defOff:2, subset:['wed','thu','fri','sat'], suffix:'Wed-Sat', emailLabel:'Wed–Sat'},
+    {k:'nine',     net:'nine',    label:'Nine Radio',       defOff:2},
+    {k:'sen',      net:'sen',     label:'SEN Radio',        defOff:2},
+    {k:'triplem',  net:'triplem', label:'Triple M',         defOff:2},
+  ];
+  function rowDue(row){ var off=(dueOv[row.k]!=null&&dueOv[row.k]!=='')?parseInt(dueOv[row.k]):row.defOff; if(isNaN(off))off=row.defOff; return addDaysISO(wc,-off); }
+  function rowSent(row){ return !!(sentMap[wc]&&sentMap[wc][row.k]); }
+  function toggleSent(row){ setSentMap(function(p){var u=Object.assign({},p);u[wc]=Object.assign({},u[wc]||{});u[wc][row.k]=!u[wc][row.k];return u;}); }
+  function rowStatus(row){
+    if(rowSent(row)) return {t:'Sent ✓',bg:'#dcfce7',co:'#166534'};
+    var due=rowDue(row);
+    var diff=Math.round((new Date(due+'T00:00:00')-new Date(TODAY+'T00:00:00'))/864e5);
+    if(diff<0) return {t:'Overdue '+(-diff)+'d',bg:'#fee2e2',co:'#991b1b'};
+    if(diff===0) return {t:'Due today',bg:'#fef3c7',co:'#92400e'};
+    if(diff<=2) return {t:'Due in '+diff+'d',bg:'#fef9c3',co:'#854d0e'};
+    return {t:'Due '+fmtShort(due),bg:'#f3f4f6',co:'#6b7280'};
+  }
+  var expiringThisWeek=useMemo(function(){
+    var end=weekDates[6]||'';
+    return creatives.filter(function(c){return c.end&&c.end>=wc&&c.end<=end;});
+  },[creatives,wc,weekDates]);
+
+  function icsEscape(t){ return String(t).replace(/\\/g,'\\\\').replace(/;/g,'\\;').replace(/,/g,'\\,'); }
+  function downloadICS(){
+    var lines=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//PointsBet//MI Planner//EN','CALSCALE:GREGORIAN'];
+    SEND_ROWS.forEach(function(row){
+      if(rowSent(row)) return;
+      var due=rowDue(row).replace(/-/g,'');
+      var cfg=emailConfig[row.net]||{};
+      lines.push('BEGIN:VEVENT');
+      lines.push('UID:mi-'+row.k+'-'+wc+'@pointsbet-mi-planner');
+      lines.push('DTSTART:'+due+'T090000');
+      lines.push('DTEND:'+due+'T091500');
+      lines.push('SUMMARY:'+icsEscape('Send '+row.label+' MIs — WC '+fmt(wc)));
+      lines.push('DESCRIPTION:'+icsEscape('To: '+(cfg.to||'not set')+(cfg.cc?' | CC: '+cfg.cc:'')+' — export from the MI Planner and send.'));
+      lines.push('BEGIN:VALARM');
+      lines.push('ACTION:DISPLAY');
+      lines.push('DESCRIPTION:'+icsEscape(row.label+' MIs due'));
+      lines.push('TRIGGER:-PT1H');
+      lines.push('END:VALARM');
+      lines.push('END:VEVENT');
+    });
+    lines.push('END:VCALENDAR');
+    var blob=new Blob([lines.join('\r\n')],{type:'text/calendar'});
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');a.href=url;a.download='MI_Deadlines_WC'+wc+'.ics';
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    setTimeout(function(){URL.revokeObjectURL(url);},150);
+    zap('✓ Calendar file downloaded — open it to add reminders to Outlook');
+  }
 
   function sendRotationEmail(){
     var cfg=emailConfig[emailNet]||{};
@@ -934,7 +1004,7 @@ function App() {
       </div>
 
       <div style={{display:'flex',borderBottom:'2px solid #e5e7eb',marginBottom:16,flexWrap:'wrap'}}>
-        {[['planner','📋 Weekly Planner'],['library','🎬 Creative Library'],['outputs','📤 Network Outputs'],['rdcmi','📡 RDC MI'],['email','✉ Email Prep']].map(function(item){
+        {[['send','🚦 Send Centre'],['planner','📋 Weekly Planner'],['library','🎬 Creative Library'],['outputs','📤 Network Outputs'],['rdcmi','📡 RDC MI'],['email','✉ Email Prep']].map(function(item){
           return <button key={item[0]} onClick={function(){setTab(item[0]);}} style={{padding:'7px 14px',border:'none',background:'none',cursor:'pointer',fontWeight:tab===item[0]?700:400,color:tab===item[0]?'#1d4ed8':'#374151',borderBottom:tab===item[0]?'2px solid #1d4ed8':'2px solid transparent',marginBottom:-2,fontSize:13}}>{item[1]}</button>;
         })}
         <span style={{marginLeft:'auto',display:'inline-flex',gap:6,alignItems:'center'}}>
@@ -942,6 +1012,59 @@ function App() {
           <label style={{padding:'4px 10px',border:'1px solid #d1d5db',borderRadius:5,background:'#fff',color:'#6b7280',fontSize:11,cursor:'pointer'}}>Restore<input type="file" accept=".json" onChange={restoreState} style={{display:'none'}}/></label>
         </span>
       </div>
+
+      {tab==='send' && (
+        <div>
+          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:14,flexWrap:'wrap'}}>
+            <span style={{fontSize:13,fontWeight:600}}>Week Commencing:</span>
+            <input type="date" value={wc} onChange={function(e){setWC(e.target.value);}} style={{border:'1px solid #d1d5db',borderRadius:5,padding:'4px 8px',fontSize:13}}/>
+            <button onClick={downloadICS} style={{backgroundColor:'#fff',color:'#1d4ed8',border:'1px solid #1d4ed8',borderRadius:6,padding:'6px 14px',fontSize:12,cursor:'pointer',fontWeight:700}}>📅 Add deadlines to Outlook (.ics)</button>
+            <span style={{fontSize:11,color:'#9ca3af'}}>Reminders fire 1hr before each unsent deadline (9am on the due day).</span>
+          </div>
+          {expiringThisWeek.length>0 && (
+            <div style={{backgroundColor:'#fffbeb',border:'1px solid #fde68a',borderRadius:8,padding:'10px 14px',marginBottom:14,fontSize:12,color:'#92400e'}}>
+              <strong>⚠ Expiring this week:</strong> {expiringThisWeek.map(function(c){return c.keyNumber+' ('+fmt(c.end)+')';}).join(' · ')} — check replacements are booked before sending MIs.
+            </div>
+          )}
+          <table style={{width:'100%',borderCollapse:'collapse',backgroundColor:'#fff',border:'1px solid #e5e7eb',borderRadius:8}}>
+            <thead>
+              <tr>
+                <th style={TH}>Destination</th>
+                <th style={TH}>Send to</th>
+                <th style={{...TH,textAlign:'center'}}>Due</th>
+                <th style={{...TH,textAlign:'center',width:70}}>Days before WC</th>
+                <th style={{...TH,textAlign:'center'}}>Status</th>
+                <th style={{...TH,width:250}}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {SEND_ROWS.map(function(row){
+                var cfg=emailConfig[row.net]||{};
+                var st=rowStatus(row);
+                var sent=rowSent(row);
+                return (
+                  <tr key={row.k} style={{borderTop:'1px solid #e5e7eb',backgroundColor:sent?'#f8fafc':'#fff'}}>
+                    <td style={{...TD,fontWeight:700,fontSize:12}}>{row.label}</td>
+                    <td style={{...TD,fontSize:11,color:cfg.to?'#374151':'#dc2626'}}>{cfg.to||'No address set — add in Email Prep'}</td>
+                    <td style={{...TD,textAlign:'center',fontSize:12}}>{fmt(rowDue(row))}</td>
+                    <td style={{...TD,textAlign:'center'}}>
+                      <input type="number" min={0} max={14} value={dueOv[row.k]!=null?dueOv[row.k]:row.defOff} onChange={function(e){var v=e.target.value,k=row.k;setDueOv(function(p){var u=Object.assign({},p);u[k]=v;return u;});}} style={{width:46,textAlign:'center',border:'1px solid #d1d5db',borderRadius:4,padding:'2px',fontSize:12}}/>
+                    </td>
+                    <td style={{...TD,textAlign:'center'}}>
+                      <span style={{fontSize:11,fontWeight:700,padding:'3px 10px',borderRadius:12,backgroundColor:st.bg,color:st.co,whiteSpace:'nowrap'}}>{st.t}</span>
+                    </td>
+                    <td style={{...TD,textAlign:'right',whiteSpace:'nowrap'}}>
+                      <button onClick={function(){prepareEmail(row.net,{subset:row.subset,suffix:row.suffix,label:row.emailLabel});}} style={{backgroundColor:'#1d4ed8',color:'#fff',border:'none',borderRadius:5,padding:'5px 12px',fontSize:11,cursor:'pointer',fontWeight:700,marginRight:6}}>✉ Export + Email</button>
+                      <button onClick={function(){toggleSent(row);}} style={{backgroundColor:sent?'#fff':'#059669',color:sent?'#6b7280':'#fff',border:sent?'1px solid #d1d5db':'none',borderRadius:5,padding:'5px 12px',fontSize:11,cursor:'pointer',fontWeight:700}}>{sent?'Undo':'Mark sent'}</button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <div style={{fontSize:11,color:'#9ca3af',marginTop:10}}>Sent status is tracked per week — change the WC date above to see another week's run sheet. Due dates default to the usual lead times (RDC Sun–Tue earlier per Racing.com's split delivery); adjust "days before WC" if a network changes its deadline.</div>
+        </div>
+      )}
 
       {tab==='planner' && (
         <div>
@@ -996,8 +1119,11 @@ function App() {
         <div>
           <PlatformBar platform={platform} setPlatform={setPlatform} platformNets={platformNets}/>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
-            <span style={{fontSize:14,fontWeight:700}}>Creative Library <span style={{fontSize:12,color:'#6b7280',fontWeight:400}}>({creatives.length} creatives)</span></span>
+            <span style={{fontSize:14,fontWeight:700}}>Creative Library <span style={{fontSize:12,color:'#6b7280',fontWeight:400}}>({creatives.length} creatives{expiredCount>0&&!showExpired?', '+expiredCount+' expired hidden':''})</span></span>
+            <span style={{display:'inline-flex',gap:12,alignItems:'center'}}>
+            <label style={{fontSize:12,color:'#6b7280',display:'inline-flex',alignItems:'center',gap:5,cursor:'pointer'}}><input type="checkbox" checked={showExpired} onChange={function(e){setShowExpired(e.target.checked);}}/>Show expired ({expiredCount})</label>
             <button onClick={function(){setShowAdd(function(v){return !v;});}} style={{backgroundColor:'#1d4ed8',color:'#fff',border:'none',borderRadius:6,padding:'6px 14px',fontSize:12,cursor:'pointer',fontWeight:700}}>+ Add Creative</button>
+            </span>
           </div>
           {showAdd && (
             <div style={{backgroundColor:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:8,padding:14,marginBottom:14}}>
@@ -1119,6 +1245,7 @@ function App() {
           <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:14,flexWrap:'wrap'}}>
             <span style={{fontSize:13,fontWeight:600}}>Week Commencing:</span>
             <input type="date" value={wc} onChange={function(e){setWC(e.target.value);}} style={{border:'1px solid #d1d5db',borderRadius:5,padding:'4px 8px',fontSize:13}}/>
+            <label style={{fontSize:11,color:'#6b7280',display:'inline-flex',alignItems:'center',gap:5,cursor:'pointer'}}><input type="checkbox" checked={showExpired} onChange={function(e){setShowExpired(e.target.checked);}}/>Show expired</label>
             <button onClick={rdcCopyFromLastWeek} style={{padding:'6px 14px',border:'1px solid #d1d5db',borderRadius:6,cursor:'pointer',fontSize:12,fontWeight:600,backgroundColor:'#fff',color:'#374151'}}>⟲ Copy from Last Week</button>
             <button onClick={function(){exportRDCMI();}} style={{backgroundColor:'#059669',color:'#fff',border:'none',borderRadius:6,padding:'6px 14px',fontSize:12,cursor:'pointer',fontWeight:700}}>↓ Full Week</button>
             <button onClick={function(){exportRDCMI(['sun','mon','tue'],'Sun-Tue');}} style={{backgroundColor:'#0369a1',color:'#fff',border:'none',borderRadius:6,padding:'6px 14px',fontSize:12,cursor:'pointer',fontWeight:700}}>↓ Sun–Tue</button>
