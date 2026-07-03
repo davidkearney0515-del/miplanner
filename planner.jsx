@@ -383,7 +383,7 @@ function ContactEditor(props){
 }
 
 function App() {
-  var stTab=useState('send'), tab=stTab[0], setTab=stTab[1];
+  var stTab=useState('library'), tab=stTab[0], setTab=stTab[1];
   var stPlatform=useState('tv'), platform=stPlatform[0], setPlatform=stPlatform[1];
   var stC=useState(DEFAULTS), creatives=stC[0], setC=stC[1];
   var stWC=useState(currentWeekSunday()), wc=stWC[0], setWC=stWC[1];
@@ -1157,7 +1157,7 @@ function App() {
       </div>
 
       <div style={{display:'flex',borderBottom:'2px solid #e5e7eb',marginBottom:16,flexWrap:'wrap'}}>
-        {[['send','🚦 Send Centre'],['planner','📋 Weekly Planner'],['library','🎬 Creative Library'],['outputs','📤 Network Outputs'],['rdcmi','📡 RDC MI'],['email','✉ Email Prep']].map(function(item){
+        {[['library','🎬 Creative Library'],['planner','📋 Weekly Planner'],['rdcmi','📡 RDC MI'],['outputs','📤 Network Outputs'],['send','🚦 Send Centre'],['email','✉ Email Prep']].map(function(item){
           return <button key={item[0]} onClick={function(){setTab(item[0]);}} style={{padding:'7px 14px',border:'none',background:'none',cursor:'pointer',fontWeight:tab===item[0]?700:400,color:tab===item[0]?'#1d4ed8':'#374151',borderBottom:tab===item[0]?'2px solid #1d4ed8':'2px solid transparent',marginBottom:-2,fontSize:13}}>{item[1]}</button>;
         })}
         <span style={{marginLeft:'auto',display:'inline-flex',gap:6,alignItems:'center'}}>
