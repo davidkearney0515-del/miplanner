@@ -1,4 +1,9 @@
-const { useState, useEffect, useMemo, Fragment } = React;
+const { useState, useEffect, useMemo, useRef, Fragment } = React;
+const SUPA_URL = "https://snfedklqaalhwooqyzbf.supabase.co";
+const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNuZmVka2xxYWFsaHdvb3F5emJmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI3ODQzMTcsImV4cCI6MjA5ODM2MDMxN30.yj9di1yRZXI5h7U-woNg-oe1EqyEQeRXAVTqgooNF4Y";
+const SUPA_TABLE = "mi_planner_state";
+const SUPA_ROW = "default";
+const SUPA_HDRS = {"apikey":SUPA_KEY,"Authorization":"Bearer "+SUPA_KEY,"Content-Type":"application/json"};
 const XLSX_NPM = window.XLSX;
 
 if (typeof window !== "undefined" && !window.storage) {
@@ -362,6 +367,8 @@ function App() {
   var stShowExp=useState(false), showExpired=stShowExp[0], setShowExpired=stShowExp[1];
   var stSent=useState({}), sentMap=stSent[0], setSentMap=stSent[1];
   var stDueOv=useState({}), dueOv=stDueOv[0], setDueOv=stDueOv[1];
+  var stSync=useState('connecting'), syncStatus=stSync[0], setSyncStatus=stSync[1];
+  var syncRef=useRef({client:Math.random().toString(36).slice(2),lastJson:'',lastStamp:'',timer:null,ready:false});
   function isExpired(c){ return !!(c.end&&c.end<TODAY); }
 
   useEffect(function(){
@@ -943,6 +950,74 @@ function App() {
     e.target.value='';
   }
 
+  function syncPayload(){
+    return {creatives:creatives,rots:rots,notes:notes,rdcMI:rdcMI,sentMap:sentMap,dueOv:dueOv,emails:emailConfig};
+  }
+  function applyRemote(row){
+    var d=row.data||{};
+    syncRef.current.lastJson=JSON.stringify(d);
+    syncRef.current.lastStamp=row.updated_at||'';
+    if(d.creatives)setC(d.creatives.map(function(c){return Object.assign({},c,{nets:Object.assign({},BLANK_NETS,c.nets)});}));
+    if(d.rots)setRots(d.rots);
+    if(d.notes)setNotes(d.notes);
+    if(d.rdcMI)setRdcMI(d.rdcMI);
+    if(d.sentMap)setSentMap(d.sentMap);
+    if(d.dueOv)setDueOv(d.dueOv);
+    if(d.emails)setEmailConfig(Object.assign({},DEFAULT_EMAILS,d.emails));
+  }
+  function pushRemote(json){
+    setSyncStatus('saving');
+    var stamp=new Date().toISOString();
+    fetch(SUPA_URL+'/rest/v1/'+SUPA_TABLE,{
+      method:'POST',
+      headers:Object.assign({},SUPA_HDRS,{Prefer:'resolution=merge-duplicates'}),
+      body:JSON.stringify([{id:SUPA_ROW,data:JSON.parse(json),client:syncRef.current.client,updated_at:stamp}])
+    }).then(function(r){
+      if(!r.ok)throw new Error('HTTP '+r.status);
+      syncRef.current.lastJson=json;
+      syncRef.current.lastStamp=stamp;
+      setSyncStatus('synced');
+    }).catch(function(){setSyncStatus('offline');});
+  }
+  // Initial pull once local storage has loaded
+  useEffect(function(){
+    if(!loaded)return;
+    fetch(SUPA_URL+'/rest/v1/'+SUPA_TABLE+'?id=eq.'+SUPA_ROW+'&select=data,client,updated_at',{headers:SUPA_HDRS})
+      .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+      .then(function(rows){
+        if(rows&&rows.length&&rows[0].data){applyRemote(rows[0]);setSyncStatus('synced');}
+        else{pushRemote(JSON.stringify(syncPayload()));}
+        syncRef.current.ready=true;
+      })
+      .catch(function(){setSyncStatus('offline');syncRef.current.ready=false;});
+  },[loaded]);
+  // Debounced push on any synced-state change
+  useEffect(function(){
+    if(!loaded||!syncRef.current.ready)return;
+    var json=JSON.stringify(syncPayload());
+    if(json===syncRef.current.lastJson)return;
+    if(syncRef.current.timer)clearTimeout(syncRef.current.timer);
+    syncRef.current.timer=setTimeout(function(){pushRemote(json);},1500);
+    return function(){if(syncRef.current.timer)clearTimeout(syncRef.current.timer);};
+  },[creatives,rots,notes,rdcMI,sentMap,dueOv,emailConfig,loaded]);
+  // Poll for remote changes
+  useEffect(function(){
+    if(!loaded)return;
+    var iv=setInterval(function(){
+      if(!syncRef.current.ready)return;
+      fetch(SUPA_URL+'/rest/v1/'+SUPA_TABLE+'?id=eq.'+SUPA_ROW+'&select=data,client,updated_at',{headers:SUPA_HDRS})
+        .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+        .then(function(rows){
+          if(!rows||!rows.length)return;
+          var row=rows[0];
+          if(row.client===syncRef.current.client)return;
+          if(row.updated_at&&row.updated_at>syncRef.current.lastStamp){applyRemote(row);setSyncStatus('synced');}
+        })
+        .catch(function(){});
+    },12000);
+    return function(){clearInterval(iv);};
+  },[loaded]);
+
   function importCreatives(e){
     var file=e.target.files&&e.target.files[0]; if(!file)return;
     var reader=new FileReader();
@@ -1048,6 +1123,7 @@ function App() {
           return <button key={item[0]} onClick={function(){setTab(item[0]);}} style={{padding:'7px 14px',border:'none',background:'none',cursor:'pointer',fontWeight:tab===item[0]?700:400,color:tab===item[0]?'#1d4ed8':'#374151',borderBottom:tab===item[0]?'2px solid #1d4ed8':'2px solid transparent',marginBottom:-2,fontSize:13}}>{item[1]}</button>;
         })}
         <span style={{marginLeft:'auto',display:'inline-flex',gap:6,alignItems:'center'}}>
+          <span title={syncStatus==='synced'?'Shared data is live — changes sync to everyone with the link':(syncStatus==='saving'?'Saving to cloud…':(syncStatus==='connecting'?'Connecting to cloud…':'Cloud sync unavailable — working locally only'))} style={{fontSize:11,fontWeight:700,padding:'3px 10px',borderRadius:12,backgroundColor:syncStatus==='synced'?'#dcfce7':(syncStatus==='saving'?'#fef9c3':(syncStatus==='connecting'?'#f3f4f6':'#fee2e2')),color:syncStatus==='synced'?'#166534':(syncStatus==='saving'?'#854d0e':(syncStatus==='connecting'?'#6b7280':'#991b1b'))}}>{syncStatus==='synced'?'● Synced':(syncStatus==='saving'?'● Saving…':(syncStatus==='connecting'?'● Connecting':'● Local only'))}</span>
           <button onClick={backupState} title="Download a JSON backup of all planner data" style={{padding:'4px 10px',border:'1px solid #d1d5db',borderRadius:5,background:'#fff',color:'#6b7280',fontSize:11,cursor:'pointer'}}>Backup</button>
           <label style={{padding:'4px 10px',border:'1px solid #d1d5db',borderRadius:5,background:'#fff',color:'#6b7280',fontSize:11,cursor:'pointer'}}>Restore<input type="file" accept=".json" onChange={restoreState} style={{display:'none'}}/></label>
         </span>
