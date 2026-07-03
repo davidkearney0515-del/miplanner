@@ -943,6 +943,46 @@ function App() {
     e.target.value='';
   }
 
+  function importCreatives(e){
+    var file=e.target.files&&e.target.files[0]; if(!file)return;
+    var reader=new FileReader();
+    reader.onload=function(ev){
+      try{
+        var d=JSON.parse(ev.target.result);
+        var list=Array.isArray(d)?d:(d.creatives||[]);
+        if(!list.length){zap('\u26A0 No creatives found in file');return;}
+        var added=0,updated=0;
+        setC(function(prev){
+          var next=prev.slice();
+          list.forEach(function(item){
+            if(!item||!item.keyNumber)return;
+            var nets=Object.assign({},BLANK_NETS,item.nets||{});
+            var idx=-1;
+            for(var i=0;i<next.length;i++){if(next[i].keyNumber===item.keyNumber){idx=i;break;}}
+            if(idx>=0){
+              next[idx]=Object.assign({},next[idx],{
+                title:item.title!=null?item.title:next[idx].title,
+                dur:item.dur!=null?String(item.dur):next[idx].dur,
+                cat:CATS.indexOf(item.cat)>=0?item.cat:next[idx].cat,
+                air:item.air!=null?item.air:next[idx].air,
+                end:item.end!=null?item.end:next[idx].end,
+                nets:item.nets?nets:next[idx].nets
+              });
+              updated++;
+            } else {
+              next.push({id:Date.now()+Math.floor(Math.random()*100000),keyNumber:item.keyNumber,title:item.title||item.keyNumber,dur:String(item.dur||'30'),cat:CATS.indexOf(item.cat)>=0?item.cat:'Other',air:item.air||'',end:item.end||'',nets:nets});
+              added++;
+            }
+          });
+          return next;
+        });
+        zap('\u2713 Imported \u2014 '+added+' added, '+updated+' updated (rotations untouched)');
+      }catch(err){zap('\u26A0 Could not read file \u2014 needs to be a creatives JSON');}
+    };
+    reader.readAsText(file);
+    e.target.value='';
+  }
+
   function addCreative(){
     if(!newC.keyNumber||!newC.title)return;
     setC(function(p){return p.concat([Object.assign({},newC,{id:Date.now()})]);});
@@ -1122,6 +1162,7 @@ function App() {
             <span style={{fontSize:14,fontWeight:700}}>Creative Library <span style={{fontSize:12,color:'#6b7280',fontWeight:400}}>({creatives.length} creatives{expiredCount>0&&!showExpired?', '+expiredCount+' expired hidden':''})</span></span>
             <span style={{display:'inline-flex',gap:12,alignItems:'center'}}>
             <label style={{fontSize:12,color:'#6b7280',display:'inline-flex',alignItems:'center',gap:5,cursor:'pointer'}}><input type="checkbox" checked={showExpired} onChange={function(e){setShowExpired(e.target.checked);}}/>Show expired ({expiredCount})</label>
+            <label style={{backgroundColor:'#059669',color:'#fff',border:'none',borderRadius:6,padding:'6px 14px',fontSize:12,cursor:'pointer',fontWeight:700}}>⬆ Import Keys<input type="file" accept=".json" onChange={importCreatives} style={{display:'none'}}/></label>
             <button onClick={function(){setShowAdd(function(v){return !v;});}} style={{backgroundColor:'#1d4ed8',color:'#fff',border:'none',borderRadius:6,padding:'6px 14px',fontSize:12,cursor:'pointer',fontWeight:700}}>+ Add Creative</button>
             </span>
           </div>
