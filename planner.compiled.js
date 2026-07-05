@@ -1,3 +1,8 @@
+(function () {
+  var css = document.createElement('style');
+  css.textContent = ["@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');", "html,body{background:linear-gradient(180deg,#f6f7fb 0%,#eef0f6 100%) !important;min-height:100vh;}", "body,button,input,select,textarea{font-family:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif !important;}", "button{transition:all .15s ease;border-radius:8px !important;}", "button:hover{filter:brightness(1.06);transform:translateY(-1px);box-shadow:0 3px 10px rgba(17,24,39,.10);}", "button:active{transform:translateY(0);}", "input,select,textarea{border-radius:8px !important;transition:border-color .15s,box-shadow .15s;}", "input:focus,select:focus,textarea:focus{outline:none !important;border-color:#EE1A42 !important;box-shadow:0 0 0 3px rgba(238,26,66,.12) !important;}", "table{border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(17,24,39,.06);}", "tbody tr{transition:background .12s;}", "tbody tr:hover{background:#f8f9fd !important;}", "::-webkit-scrollbar{width:9px;height:9px;}", "::-webkit-scrollbar-thumb{background:#c9cdd8;border-radius:6px;}", "::-webkit-scrollbar-thumb:hover{background:#aab0bf;}", "::-webkit-scrollbar-track{background:transparent;}", ".mi-shell{animation:miFade .25s ease;}", "@keyframes miFade{from{opacity:.6;transform:translateY(3px);}to{opacity:1;transform:none;}}"].join('\n');
+  document.head.appendChild(css);
+})();
 const {
   useState,
   useEffect,
@@ -1957,6 +1962,603 @@ function RdcDaySection(props) {
       value: s.k
     }, s.label, " (", s.count, ")");
   })))));
+}
+var SCRIPT_FORMATS = {
+  siposs: {
+    name: "Arryn Siposs — SEN Thursday SGM",
+    file: "SEN_Siposs_Script",
+    prompt: "You are writing an AFL Same Game Multi preview segment in the established Arryn Siposs SEN Thursday format. STRUCTURE: Match heading (Team A vs Team B). Brief 1-2 sentence intro setting the scene (form, injuries, venue, the angle). Then FOUR legs, each formatted exactly as: 'LEG [number]' on its own line, then the selection name + line + price (e.g. 'Sydney -23.5 (to cover the line) - $1.88'), then one sentence framing why the leg matters, then one or two short supporting reasons using recent form in 'X of last Y' style. Flag the longest-priced player prop as the value leg by adding '(Value)' after its price - usually Leg 4. Then a 'Pull Em' call-out paragraph identifying which leg is the early cash-out play (prefer a forward/goalscorer leg) with a specific half-time threshold for pulling it. Finish with 'Multi Summary' - a clean list of all four legs with NO prices - then 'Total Multi Price: $X.XX'. VOICE: conversational punter-to-punter. Always name the venue when it matters. RULES: NEVER invent or estimate any price or the total - only use prices visible in the screenshots; if a price or the total is not visible, write [PRICE NEEDED] and say so at the end. Only label a stat 'StatMate Hot Stat' if a StatMate callout is visible in a screenshot. Avoid 'set the tone', 'the leg the multi hinges on', 'W-W-W' notation, and 'inside the eight' (use 'holding onto a top eight spot'). If the game is too close to call, don't pick a winner - play the player markets instead. Don't mention ladder positions for Friday games if Thursday results could change them. Use **bold** only for the LEG headings and Total Multi Price. Output plain text with **bold** markers, no markdown headers, no bullets, no emojis."
+  },
+  jds: {
+    name: "Jules de Stoop — Pull Em SGM",
+    file: "SEN_JDS_PullEm_Script",
+    prompt: "You are writing an AFL Pull Em SGM script in the established Jules de Stoop format. STRUCTURE, in this exact order: Title line (Team A v Team B - day/night). Section 'The Game' as short dash bullets (match context, odds, ladder positions, team news). Section 'Pull Em Reminder' as dash bullets: 'Available on all AFL games across Round [X] and all matches for the 2026 World Cup' / 'Make sure you apply the Pull Em token in the bet slip' / 'Leg lacking heat, Pull Em and keep your multi alive'. Section 'My SGM Tonight': each leg as a **bold heading** (selection + price), followed by 1-2 dash bullets of form lines (say 'last 5 games' not 'last 5 goals'), and a 'StatMate Hot Stat:' bullet ONLY when a StatMate callout is visible in a screenshot (the stat text itself in **bold**). Then **Total Odds: $X.XX** in bold. Then 'So my SGM for this one is:' with a one-line concise recap of the legs. Close verbatim with: 'And remember Pull Em is exclusive to PointsBet and available for ALL WORLD CUP matches on top of the footy.' VOICE: first person, conversational footy banter, no corporate filler. RULES: Pull Em mechanic is removing one leg before the end of halftime with remaining legs re-pricing (minimum 4 legs, $5 total odds) - never describe it as cash back. NEVER invent or estimate leg prices or the total - only use what is visible in screenshots; write [PRICE NEEDED] for anything missing and flag it at the end. 'Huge outsiders' only for prices $3.50+, otherwise 'outsiders' or 'underdogs'. Prefer a player prop as the Pull Em watch leg over a team result leg. Vary phrasing if writing multiple games. Output plain text with **bold** markers and dash bullets only, no markdown headers, no emojis."
+  }
+};
+function scriptTextToHtml(t) {
+  var esc = t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  esc = esc.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+  return esc.split(/\n/).map(function (line) {
+    return '<p style="margin:0 0 6pt 0;">' + (line.trim() === '' ? '&nbsp;' : line) + '</p>';
+  }).join('');
+}
+function ScriptStudio(props) {
+  var fmt = SCRIPT_FORMATS[props.format];
+  var stImgs = useState([]),
+    imgs = stImgs[0],
+    setImgs = stImgs[1];
+  var stNotes2 = useState(''),
+    snotes = stNotes2[0],
+    setSnotes = stNotes2[1];
+  var stOut = useState(''),
+    out = stOut[0],
+    setOut = stOut[1];
+  var stBusy = useState(false),
+    busy = stBusy[0],
+    setBusy = stBusy[1];
+  var stKey = useState(function () {
+      try {
+        return localStorage.getItem('mi2_anthropic_key') || '';
+      } catch (e) {
+        return '';
+      }
+    }),
+    apiKey = stKey[0],
+    setApiKey = stKey[1];
+  var stDrag = useState(false),
+    dragOver = stDrag[0],
+    setDragOver = stDrag[1];
+  var stErr = useState(''),
+    err = stErr[0],
+    setErr = stErr[1];
+  var stPE = useState(function () {
+      try {
+        var v = JSON.parse(localStorage.getItem('mi2_pullem') || 'null');
+        if (v) return v;
+      } catch (e) {}
+      return {
+        legs: '4',
+        odds: '5',
+        trigger: 'before the start of the third quarter',
+        scope: 'All AFL games',
+        round: '',
+        wc: true
+      };
+    }),
+    pe = stPE[0],
+    setPE = stPE[1];
+  function setPEField(k, v) {
+    setPE(function (p) {
+      var u = Object.assign({}, p);
+      u[k] = v;
+      try {
+        localStorage.setItem('mi2_pullem', JSON.stringify(u));
+      } catch (e) {}
+      return u;
+    });
+  }
+  function peAvailability() {
+    var base = pe.scope + (pe.round ? ' across Round ' + pe.round : '');
+    return base + (pe.wc ? ' and all matches for the 2026 World Cup' : '');
+  }
+  function peOffer() {
+    return 'CURRENT PULL EM OFFER — use these exact parameters everywhere the mechanic is referenced (reminder bullets, watch-leg call-outs, closer) and never any other numbers: minimum ' + pe.legs + ' legs, $' + pe.odds + '+ total odds, pull one leg ' + pe.trigger + ', available on ' + peAvailability() + '. The Pull Em Reminder availability line must read: "Available on ' + peAvailability() + '".' + (pe.wc ? '' : ' Do NOT mention the World Cup in the closer — adapt the closer to the current availability.');
+  }
+  function saveKey(v) {
+    setApiKey(v);
+    try {
+      localStorage.setItem('mi2_anthropic_key', v);
+    } catch (e) {}
+  }
+  function addFiles(files) {
+    Array.prototype.slice.call(files).forEach(function (f) {
+      if (!f.type || f.type.indexOf('image/') !== 0) return;
+      var r = new FileReader();
+      r.onload = function (ev) {
+        var dataUrl = ev.target.result;
+        setImgs(function (p) {
+          return p.concat([{
+            name: f.name,
+            media: f.type,
+            data: dataUrl.split(',')[1],
+            url: dataUrl
+          }]);
+        });
+      };
+      r.readAsDataURL(f);
+    });
+  }
+  function generate() {
+    setErr('');
+    if (!apiKey) {
+      setErr('Add your Anthropic API key first (one-time setup — see note below).');
+      return;
+    }
+    if (!imgs.length) {
+      setErr('Drop in at least one screenshot — bet slip, fixture or ladder.');
+      return;
+    }
+    setBusy(true);
+    var content = imgs.map(function (im) {
+      return {
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: im.media,
+          data: im.data
+        }
+      };
+    });
+    var userText = 'Write the script(s) from these screenshots.' + (snotes ? ' Additional context from me: ' + snotes : '') + ' Remember: never invent prices.';
+    content.push({
+      type: 'text',
+      text: userText
+    });
+    fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 4000,
+        system: fmt.prompt + ' ' + peOffer(),
+        messages: [{
+          role: 'user',
+          content: content
+        }]
+      })
+    }).then(function (r) {
+      return r.json();
+    }).then(function (d) {
+      setBusy(false);
+      if (d && d.content) {
+        setOut(d.content.filter(function (b) {
+          return b.type === 'text';
+        }).map(function (b) {
+          return b.text;
+        }).join('\n'));
+      } else if (d && d.error) {
+        setErr('API error: ' + (d.error.message || d.error.type));
+      } else {
+        setErr('Unexpected response — try again.');
+      }
+    }).catch(function (e) {
+      setBusy(false);
+      setErr('Request failed: ' + e.message);
+    });
+  }
+  function copyForEmail() {
+    if (!out) return;
+    var html = '<div style="font-family:Calibri,sans-serif;font-size:11pt;color:#000;">' + scriptTextToHtml(out) + '</div>';
+    try {
+      var blob = new Blob([html], {
+        type: 'text/html'
+      });
+      var txt = new Blob([out.replace(/\*\*/g, '')], {
+        type: 'text/plain'
+      });
+      navigator.clipboard.write([new ClipboardItem({
+        'text/html': blob,
+        'text/plain': txt
+      })]).then(function () {
+        props.zap('\u2713 Copied — paste straight into your email');
+      }).catch(function () {
+        navigator.clipboard.writeText(out.replace(/\*\*/g, '')).then(function () {
+          props.zap('\u2713 Copied as plain text');
+        });
+      });
+    } catch (e) {
+      navigator.clipboard.writeText(out.replace(/\*\*/g, '')).then(function () {
+        props.zap('\u2713 Copied as plain text');
+      });
+    }
+  }
+  function exportWord() {
+    if (!out) return;
+    var html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"><title>' + fmt.file + '</title></head><body style="font-family:Calibri,sans-serif;font-size:10pt;color:#000;">' + scriptTextToHtml(out) + '</body></html>';
+    var blob = new Blob(['\ufeff' + html], {
+      type: 'application/msword'
+    });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = fmt.file + '_' + new Date().toISOString().slice(0, 10) + '.doc';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () {
+      URL.revokeObjectURL(url);
+    }, 150);
+    props.zap('\u2713 Word doc downloaded — Calibri 10pt, plain');
+  }
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      backgroundColor: '#fff',
+      borderRadius: 14,
+      padding: '12px 16px',
+      marginBottom: 14,
+      boxShadow: '0 1px 4px rgba(17,24,39,.07)',
+      display: 'flex',
+      gap: 14,
+      flexWrap: 'wrap',
+      alignItems: 'flex-end'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      fontWeight: 800,
+      color: '#EE1A42',
+      textTransform: 'uppercase',
+      letterSpacing: '0.06em',
+      paddingBottom: 7
+    }
+  }, "Pull Em offer"), /*#__PURE__*/React.createElement("label", {
+    style: {
+      fontSize: 11,
+      color: '#6b7280'
+    }
+  }, "Min legs", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    min: 2,
+    max: 10,
+    value: pe.legs,
+    onChange: function (e) {
+      setPEField('legs', e.target.value);
+    },
+    style: {
+      width: 58,
+      border: '1px solid #d1d5db',
+      padding: '5px 7px',
+      fontSize: 12,
+      marginTop: 2
+    }
+  })), /*#__PURE__*/React.createElement("label", {
+    style: {
+      fontSize: 11,
+      color: '#6b7280'
+    }
+  }, "Min total odds $", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    min: 1,
+    step: 0.5,
+    value: pe.odds,
+    onChange: function (e) {
+      setPEField('odds', e.target.value);
+    },
+    style: {
+      width: 64,
+      border: '1px solid #d1d5db',
+      padding: '5px 7px',
+      fontSize: 12,
+      marginTop: 2
+    }
+  })), /*#__PURE__*/React.createElement("label", {
+    style: {
+      fontSize: 11,
+      color: '#6b7280'
+    }
+  }, "Pull trigger", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("input", {
+    value: pe.trigger,
+    onChange: function (e) {
+      setPEField('trigger', e.target.value);
+    },
+    style: {
+      width: 220,
+      border: '1px solid #d1d5db',
+      padding: '5px 7px',
+      fontSize: 12,
+      marginTop: 2
+    }
+  })), /*#__PURE__*/React.createElement("label", {
+    style: {
+      fontSize: 11,
+      color: '#6b7280'
+    }
+  }, "Availability", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("select", {
+    value: pe.scope,
+    onChange: function (e) {
+      setPEField('scope', e.target.value);
+    },
+    style: {
+      border: '1px solid #d1d5db',
+      padding: '5px 7px',
+      fontSize: 12,
+      marginTop: 2
+    }
+  }, /*#__PURE__*/React.createElement("option", null, "All AFL games"), /*#__PURE__*/React.createElement("option", null, "Selected AFL games"), /*#__PURE__*/React.createElement("option", null, "All NRL games"), /*#__PURE__*/React.createElement("option", null, "Selected NRL games"), /*#__PURE__*/React.createElement("option", null, "All World Cup matches"))), /*#__PURE__*/React.createElement("label", {
+    style: {
+      fontSize: 11,
+      color: '#6b7280'
+    }
+  }, "Round", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("input", {
+    value: pe.round,
+    onChange: function (e) {
+      setPEField('round', e.target.value);
+    },
+    placeholder: "17",
+    style: {
+      width: 52,
+      border: '1px solid #d1d5db',
+      padding: '5px 7px',
+      fontSize: 12,
+      marginTop: 2
+    }
+  })), /*#__PURE__*/React.createElement("label", {
+    style: {
+      fontSize: 11,
+      color: '#6b7280',
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 5,
+      paddingBottom: 7,
+      cursor: 'pointer'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: !!pe.wc,
+    onChange: function (e) {
+      setPEField('wc', e.target.checked);
+    }
+  }), "+ World Cup"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: '#9ca3af',
+      flexBasis: '100%'
+    }
+  }, "Scripts will say: min ", pe.legs, " legs · $", pe.odds, "+ total odds · pull one leg ", pe.trigger, " · \"Available on ", peAvailability(), "\"")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: '380px 1fr',
+      gap: 16,
+      alignItems: 'start'
+    }
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    onDragOver: function (e) {
+      e.preventDefault();
+      setDragOver(true);
+    },
+    onDragLeave: function () {
+      setDragOver(false);
+    },
+    onDrop: function (e) {
+      e.preventDefault();
+      setDragOver(false);
+      addFiles(e.dataTransfer.files);
+    },
+    style: {
+      border: '2px dashed ' + (dragOver ? '#EE1A42' : '#c9cdd8'),
+      borderRadius: 14,
+      padding: '26px 16px',
+      textAlign: 'center',
+      backgroundColor: dragOver ? '#fff5f7' : '#fff',
+      transition: 'all .15s',
+      marginBottom: 10
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 26,
+      marginBottom: 6
+    }
+  }, "📸"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      fontWeight: 700,
+      color: '#111827'
+    }
+  }, "Drop bet slip, fixture & ladder screenshots"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: '#9ca3af',
+      margin: '4px 0 10px'
+    }
+  }, "or"), /*#__PURE__*/React.createElement("label", {
+    style: {
+      backgroundColor: '#111827',
+      color: '#fff',
+      borderRadius: 8,
+      padding: '7px 16px',
+      fontSize: 12,
+      fontWeight: 700,
+      cursor: 'pointer'
+    }
+  }, "Browse files", /*#__PURE__*/React.createElement("input", {
+    type: "file",
+    accept: "image/*",
+    multiple: true,
+    onChange: function (e) {
+      addFiles(e.target.files);
+      e.target.value = '';
+    },
+    style: {
+      display: 'none'
+    }
+  }))), imgs.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(3,1fr)',
+      gap: 6,
+      marginBottom: 10
+    }
+  }, imgs.map(function (im, i) {
+    return /*#__PURE__*/React.createElement("div", {
+      key: i,
+      style: {
+        position: 'relative',
+        borderRadius: 8,
+        overflow: 'hidden',
+        border: '1px solid #e5e7eb'
+      }
+    }, /*#__PURE__*/React.createElement("img", {
+      src: im.url,
+      style: {
+        width: '100%',
+        height: 74,
+        objectFit: 'cover',
+        display: 'block'
+      }
+    }), /*#__PURE__*/React.createElement("button", {
+      onClick: function () {
+        setImgs(function (p) {
+          return p.filter(function (_, j) {
+            return j !== i;
+          });
+        });
+      },
+      style: {
+        position: 'absolute',
+        top: 2,
+        right: 2,
+        background: 'rgba(12,14,26,.75)',
+        color: '#fff',
+        border: 'none',
+        borderRadius: 5,
+        fontSize: 10,
+        padding: '2px 6px',
+        cursor: 'pointer'
+      }
+    }, "✕"));
+  })), /*#__PURE__*/React.createElement("textarea", {
+    value: snotes,
+    onChange: function (e) {
+      setSnotes(e.target.value);
+    },
+    placeholder: "Optional notes — venue, team news, the angle you're leaning toward, anything not in the screenshots…",
+    style: {
+      width: '100%',
+      minHeight: 70,
+      border: '1px solid #d1d5db',
+      padding: '8px 10px',
+      fontSize: 12,
+      boxSizing: 'border-box',
+      resize: 'vertical',
+      marginBottom: 10
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    onClick: generate,
+    disabled: busy,
+    style: {
+      width: '100%',
+      background: busy ? '#9ca3af' : 'linear-gradient(90deg,#EE1A42,#c8123a)',
+      color: '#fff',
+      border: 'none',
+      borderRadius: 10,
+      padding: '11px',
+      fontSize: 13,
+      fontWeight: 800,
+      cursor: busy ? 'default' : 'pointer',
+      letterSpacing: '0.02em'
+    }
+  }, busy ? 'Writing… (10–20 sec)' : '✍ Write the Script'), err && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8,
+      fontSize: 12,
+      color: '#991b1b',
+      backgroundColor: '#fee2e2',
+      borderRadius: 8,
+      padding: '8px 10px'
+    }
+  }, err), /*#__PURE__*/React.createElement("details", {
+    style: {
+      marginTop: 12,
+      fontSize: 11,
+      color: '#6b7280'
+    }
+  }, /*#__PURE__*/React.createElement("summary", {
+    style: {
+      cursor: 'pointer',
+      fontWeight: 700
+    }
+  }, "⚙ API key (one-time setup)"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "password",
+    value: apiKey,
+    onChange: function (e) {
+      saveKey(e.target.value);
+    },
+    placeholder: "sk-ant-…",
+    style: {
+      width: '100%',
+      border: '1px solid #d1d5db',
+      padding: '7px 9px',
+      fontSize: 12,
+      boxSizing: 'border-box'
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 6,
+      lineHeight: 1.5
+    }
+  }, "Script writing runs on Claude and needs an Anthropic API key. Create one at console.anthropic.com → API Keys. It's stored only in this browser — never synced or shared with anyone else using the planner.")))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: copyForEmail,
+    disabled: !out,
+    style: {
+      backgroundColor: out ? '#111827' : '#e5e7eb',
+      color: out ? '#fff' : '#9ca3af',
+      border: 'none',
+      borderRadius: 8,
+      padding: '7px 16px',
+      fontSize: 12,
+      fontWeight: 700,
+      cursor: out ? 'pointer' : 'default'
+    }
+  }, "📋 Copy for Email"), /*#__PURE__*/React.createElement("button", {
+    onClick: exportWord,
+    disabled: !out,
+    style: {
+      backgroundColor: out ? '#1d4ed8' : '#e5e7eb',
+      color: out ? '#fff' : '#9ca3af',
+      border: 'none',
+      borderRadius: 8,
+      padding: '7px 16px',
+      fontSize: 12,
+      fontWeight: 700,
+      cursor: out ? 'pointer' : 'default'
+    }
+  }, "⬇ Export to Word"), out && /*#__PURE__*/React.createElement("button", {
+    onClick: function () {
+      setOut('');
+    },
+    style: {
+      backgroundColor: '#fff',
+      color: '#6b7280',
+      border: '1px solid #d1d5db',
+      borderRadius: 8,
+      padding: '7px 14px',
+      fontSize: 12,
+      cursor: 'pointer'
+    }
+  }, "Clear")), /*#__PURE__*/React.createElement("textarea", {
+    value: out,
+    onChange: function (e) {
+      setOut(e.target.value);
+    },
+    placeholder: 'The ' + fmt.name + ' script lands here — fully editable before you copy or export. Prices only ever come from your screenshots; anything missing is flagged as [PRICE NEEDED].',
+    style: {
+      width: '100%',
+      minHeight: 520,
+      border: '1px solid #d1d5db',
+      padding: '14px 16px',
+      fontSize: 13,
+      lineHeight: 1.55,
+      boxSizing: 'border-box',
+      resize: 'vertical',
+      backgroundColor: '#fff',
+      fontFamily: 'Calibri,Inter,sans-serif'
+    }
+  }))));
 }
 function ContactEditor(props) {
   var net = props.net,
@@ -3943,76 +4545,91 @@ function App() {
   var rdcDayData = curWeek[rdcDay] || {};
   var rdcDueDate = getDueDate(wc, DAYS.indexOf(rdcDay));
   return /*#__PURE__*/React.createElement("div", {
+    className: "mi-shell",
     style: {
-      fontFamily: 'system-ui,sans-serif',
-      maxWidth: 1350,
+      maxWidth: 1380,
       margin: '0 auto',
-      padding: '14px 16px',
+      padding: '0 18px 24px',
       color: '#111827'
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       justifyContent: 'space-between',
-      alignItems: 'flex-start',
-      marginBottom: 14
+      alignItems: 'center',
+      margin: '0 -18px 18px',
+      padding: '16px 26px',
+      background: 'linear-gradient(90deg,#0c0e1a 0%,#171a2e 100%)',
+      borderBottom: '3px solid #EE1A42',
+      boxShadow: '0 4px 18px rgba(12,14,26,.25)'
     }
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontSize: 18,
+      fontSize: 19,
       fontWeight: 800,
-      letterSpacing: '-0.3px'
+      letterSpacing: '-0.4px',
+      color: '#fff'
     }
-  }, "PointsBet MI Planner ", /*#__PURE__*/React.createElement("span", {
+  }, "PointsBet ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#EE1A42'
+    }
+  }, "MI Planner"), " ", /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 10,
       fontWeight: 800,
       color: '#fff',
-      backgroundColor: '#1d4ed8',
-      borderRadius: 4,
-      padding: '2px 6px',
+      backgroundColor: '#EE1A42',
+      borderRadius: 5,
+      padding: '2px 7px',
       verticalAlign: 'middle',
-      letterSpacing: '0.05em'
+      letterSpacing: '0.08em',
+      marginLeft: 4
     }
   }, "V2")), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
-      color: '#6b7280',
-      marginTop: 2
+      color: '#9aa0b5',
+      marginTop: 3
     }
   }, "Material Instructions · TV · Radio · RDC · ", creatives.length, " creatives")), flash && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 12,
-      color: '#059669',
+      color: '#0c0e1a',
       fontWeight: 700,
-      padding: '5px 12px',
-      backgroundColor: '#dcfce7',
-      borderRadius: 6,
-      border: '1px solid #86efac'
+      padding: '6px 14px',
+      backgroundColor: '#7CFC9B',
+      borderRadius: 20,
+      boxShadow: '0 2px 8px rgba(0,0,0,.25)'
     }
   }, flash)), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
-      borderBottom: '2px solid #e5e7eb',
-      marginBottom: 16,
-      flexWrap: 'wrap'
+      gap: 6,
+      marginBottom: 18,
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      background: '#fff',
+      borderRadius: 14,
+      padding: '8px 10px',
+      boxShadow: '0 1px 4px rgba(17,24,39,.07)'
     }
-  }, [['library', '🎬 Creative Library'], ['planner', '📋 Weekly Planner'], ['rdcmi', '📡 RDC MI'], ['outputs', '📤 Network Outputs'], ['send', '🚦 Send Centre'], ['email', '✉ Email Prep']].map(function (item) {
+  }, [['library', '🎬 Creative Library'], ['planner', '📋 Weekly Planner'], ['rdcmi', '📡 RDC MI'], ['outputs', '📤 Network Outputs'], ['send', '🚦 Send Centre'], ['email', '✉ Email Prep'], ['siposs', '🎙 Siposs'], ['jds', '🎙 JDS']].map(function (item) {
     return /*#__PURE__*/React.createElement("button", {
       key: item[0],
       onClick: function () {
         setTab(item[0]);
       },
       style: {
-        padding: '7px 14px',
+        padding: '8px 15px',
         border: 'none',
-        background: 'none',
         cursor: 'pointer',
-        fontWeight: tab === item[0] ? 700 : 400,
-        color: tab === item[0] ? '#1d4ed8' : '#374151',
-        borderBottom: tab === item[0] ? '2px solid #1d4ed8' : '2px solid transparent',
-        marginBottom: -2,
-        fontSize: 13
+        fontWeight: tab === item[0] ? 700 : 500,
+        color: tab === item[0] ? '#fff' : '#4b5563',
+        background: tab === item[0] ? 'linear-gradient(90deg,#EE1A42,#c8123a)' : 'transparent',
+        borderRadius: 9,
+        fontSize: 13,
+        boxShadow: tab === item[0] ? '0 3px 10px rgba(238,26,66,.30)' : 'none'
       }
     }, item[1]);
   }), /*#__PURE__*/React.createElement("span", {
@@ -4061,7 +4678,13 @@ function App() {
     style: {
       display: 'none'
     }
-  })))), tab === 'send' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  })))), tab === 'siposs' && /*#__PURE__*/React.createElement(ScriptStudio, {
+    format: "siposs",
+    zap: zap
+  }), tab === 'jds' && /*#__PURE__*/React.createElement(ScriptStudio, {
+    format: "jds",
+    zap: zap
+  }), tab === 'send' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -4525,11 +5148,6 @@ function App() {
   }, "End Date"), /*#__PURE__*/React.createElement("th", {
     style: {
       ...TH,
-      textAlign: 'center'
-    }
-  }, "Material"), /*#__PURE__*/React.createElement("th", {
-    style: {
-      ...TH,
       textAlign: 'center',
       backgroundColor: '#e0f2fe',
       fontSize: 10,
@@ -4938,7 +5556,12 @@ function App() {
         color: '#9ca3af',
         fontSize: 9
       }
-    }, "blank = ongoing")), allPlatNets.map(function (n) {
+    }, "blank = ongoing")), /*#__PURE__*/React.createElement("th", {
+      style: {
+        ...TH,
+        textAlign: 'center'
+      }
+    }, "Material"), allPlatNets.map(function (n) {
       return /*#__PURE__*/React.createElement("th", {
         key: n.k,
         style: {
