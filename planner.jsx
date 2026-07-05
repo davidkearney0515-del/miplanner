@@ -1006,14 +1006,12 @@ function App() {
     e.target.value='';
   }
 
-  function syncPayload(){
-    return {creatives:creatives,rots:rots,notes:notes,rdcMI:rdcMI,sentMap:sentMap,dueOv:dueOv,emails:emailConfig};
-  }
-  function applyRemote(row){
+  function mainPayload(){ return {rots:rots,notes:notes,rdcMI:rdcMI,sentMap:sentMap,dueOv:dueOv,emails:emailConfig}; }
+  function crePayload(){ return {creatives:creatives}; }
+  function applyMain(row){
     var d=row.data||{};
-    syncRef.current.lastJson=JSON.stringify(d);
-    syncRef.current.lastStamp=row.updated_at||'';
-    if(d.creatives)setC(d.creatives.map(function(c){return Object.assign({},c,{nets:Object.assign({},BLANK_NETS,c.nets)});}));
+    syncRef.current.mainJson=JSON.stringify(d);
+    syncRef.current.mainStamp=row.updated_at||'';
     if(d.rots)setRots(d.rots);
     if(d.notes)setNotes(d.notes);
     if(d.rdcMI)setRdcMI(d.rdcMI);
@@ -1021,53 +1019,74 @@ function App() {
     if(d.dueOv)setDueOv(d.dueOv);
     if(d.emails)setEmailConfig(Object.assign({},DEFAULT_EMAILS,d.emails));
   }
-  function pushRemote(json){
+  function applyCre(row){
+    var d=row.data||{};
+    syncRef.current.creJson=JSON.stringify(d);
+    syncRef.current.creStamp=row.updated_at||'';
+    if(d.creatives)setC(d.creatives.map(function(c){return Object.assign({},c,{nets:Object.assign({},BLANK_NETS,c.nets)});}));
+  }
+  function pushRow(rowId,json,slot){
     setSyncStatus('saving');
     var stamp=new Date().toISOString();
     fetch(SUPA_URL+'/rest/v1/'+SUPA_TABLE,{
       method:'POST',
       headers:Object.assign({},SUPA_HDRS,{Prefer:'resolution=merge-duplicates'}),
-      body:JSON.stringify([{id:SUPA_ROW,data:JSON.parse(json),client:syncRef.current.client,updated_at:stamp}])
+      body:JSON.stringify([{id:rowId,data:JSON.parse(json),client:syncRef.current.client,updated_at:stamp}])
     }).then(function(r){
       if(!r.ok)throw new Error('HTTP '+r.status);
-      syncRef.current.lastJson=json;
-      syncRef.current.lastStamp=stamp;
+      syncRef.current[slot+'Json']=json;
+      syncRef.current[slot+'Stamp']=stamp;
       setSyncStatus('synced');
     }).catch(function(){setSyncStatus('offline');});
   }
   // Initial pull once local storage has loaded
   useEffect(function(){
     if(!loaded)return;
-    fetch(SUPA_URL+'/rest/v1/'+SUPA_TABLE+'?id=eq.'+SUPA_ROW+'&select=data,client,updated_at',{headers:SUPA_HDRS})
+    fetch(SUPA_URL+'/rest/v1/'+SUPA_TABLE+'?id=in.('+SUPA_ROW+',creatives)&select=id,data,client,updated_at',{headers:SUPA_HDRS})
       .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
       .then(function(rows){
-        if(rows&&rows.length&&rows[0].data){applyRemote(rows[0]);setSyncStatus('synced');}
-        else{pushRemote(JSON.stringify(syncPayload()));}
+        var main=null,cre=null;
+        (rows||[]).forEach(function(row){ if(row.id===SUPA_ROW)main=row; if(row.id==='creatives')cre=row; });
+        if(main&&main.data){applyMain(main);}else{pushRow(SUPA_ROW,JSON.stringify(mainPayload()),'main');}
+        if(cre&&cre.data){applyCre(cre);}
+        else if(main&&main.data&&main.data.creatives){applyCre({data:{creatives:main.data.creatives},updated_at:main.updated_at});pushRow('creatives',JSON.stringify({creatives:main.data.creatives}),'cre');}
+        else{pushRow('creatives',JSON.stringify(crePayload()),'cre');}
+        if(main||cre)setSyncStatus('synced');
         syncRef.current.ready=true;
       })
       .catch(function(){setSyncStatus('offline');syncRef.current.ready=false;});
   },[loaded]);
-  // Debounced push on any synced-state change
+  // Debounced push — main payload (rotations, RDC, notes, send state, emails)
   useEffect(function(){
     if(!loaded||!syncRef.current.ready)return;
-    var json=JSON.stringify(syncPayload());
-    if(json===syncRef.current.lastJson)return;
-    if(syncRef.current.timer)clearTimeout(syncRef.current.timer);
-    syncRef.current.timer=setTimeout(function(){pushRemote(json);},1500);
-    return function(){if(syncRef.current.timer)clearTimeout(syncRef.current.timer);};
-  },[creatives,rots,notes,rdcMI,sentMap,dueOv,emailConfig,loaded]);
-  // Poll for remote changes
+    var json=JSON.stringify(mainPayload());
+    if(json===syncRef.current.mainJson)return;
+    if(syncRef.current.mainTimer)clearTimeout(syncRef.current.mainTimer);
+    syncRef.current.mainTimer=setTimeout(function(){pushRow(SUPA_ROW,json,'main');},1500);
+    return function(){if(syncRef.current.mainTimer)clearTimeout(syncRef.current.mainTimer);};
+  },[rots,notes,rdcMI,sentMap,dueOv,emailConfig,loaded]);
+  // Debounced push — creatives (separate channel so agency key-adds can't collide with rotation edits)
+  useEffect(function(){
+    if(!loaded||!syncRef.current.ready)return;
+    var json=JSON.stringify(crePayload());
+    if(json===syncRef.current.creJson)return;
+    if(syncRef.current.creTimer)clearTimeout(syncRef.current.creTimer);
+    syncRef.current.creTimer=setTimeout(function(){pushRow('creatives',json,'cre');},1500);
+    return function(){if(syncRef.current.creTimer)clearTimeout(syncRef.current.creTimer);};
+  },[creatives,loaded]);
+  // Poll for remote changes on both rows
   useEffect(function(){
     if(!loaded)return;
     var iv=setInterval(function(){
       if(!syncRef.current.ready)return;
-      fetch(SUPA_URL+'/rest/v1/'+SUPA_TABLE+'?id=eq.'+SUPA_ROW+'&select=data,client,updated_at',{headers:SUPA_HDRS})
+      fetch(SUPA_URL+'/rest/v1/'+SUPA_TABLE+'?id=in.('+SUPA_ROW+',creatives)&select=id,data,client,updated_at',{headers:SUPA_HDRS})
         .then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
         .then(function(rows){
-          if(!rows||!rows.length)return;
-          var row=rows[0];
-          if(row.client===syncRef.current.client)return;
-          if(row.updated_at&&row.updated_at>syncRef.current.lastStamp){applyRemote(row);setSyncStatus('synced');}
+          (rows||[]).forEach(function(row){
+            if(row.client===syncRef.current.client)return;
+            if(row.id===SUPA_ROW&&row.updated_at&&row.updated_at>(syncRef.current.mainStamp||'')){applyMain(row);setSyncStatus('synced');}
+            if(row.id==='creatives'&&row.updated_at&&row.updated_at>(syncRef.current.creStamp||'')){applyCre(row);setSyncStatus('synced');}
+          });
         })
         .catch(function(){});
     },12000);
