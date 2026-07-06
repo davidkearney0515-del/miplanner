@@ -4614,7 +4614,7 @@ function App() {
       padding: '8px 10px',
       boxShadow: '0 1px 4px rgba(17,24,39,.07)'
     }
-  }, [['library', '🎬 Creative Library'], ['planner', '📋 Weekly Planner'], ['rdcmi', '📡 RDC MI'], ['outputs', '📤 Network Outputs'], ['send', '🚦 Send Centre'], ['email', '✉ Email Prep'], ['siposs', '🎙 Siposs'], ['jds', '🎙 JDS']].map(function (item) {
+  }, [['library', '🎬 Creative Library'], ['planner', '📋 Weekly Planner'], ['rdcmi', '📡 RDC MI'], ['outputs', '📤 Network Outputs'], ['send', '🚦 Send Centre'], ['email', '✉ Email Prep']].map(function (item) {
     return /*#__PURE__*/React.createElement("button", {
       key: item[0],
       onClick: function () {
