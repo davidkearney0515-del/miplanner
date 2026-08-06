@@ -53,6 +53,7 @@ function currentWeekSunday() {
   return localISO(d);
 }
 const SV = "5";
+const BUILD = "6 Aug 2026";
 const fmt = s => s ? s.split('-').reverse().join('/') : '—';
 const fmtShort = s => s ? s.split('-').reverse().join('/').slice(0, 5) : '';
 const CATS = ["AFL", "NRL", "NBA", "MLB", "Racing", "Foxcatcher/StatMate", "World Cup", "Other"];
@@ -4043,7 +4044,21 @@ function App() {
       letterSpacing: '0.08em',
       marginLeft: 4
     }
-  }, "V2")), /*#__PURE__*/React.createElement("div", {
+  }, "V2"), " ", /*#__PURE__*/React.createElement("span", {
+    title: "Build date \u2014 confirms which version you're viewing",
+    style: {
+      fontSize: 10,
+      fontWeight: 700,
+      color: '#9aa0b5',
+      backgroundColor: 'rgba(255,255,255,0.08)',
+      border: '1px solid rgba(255,255,255,0.15)',
+      borderRadius: 5,
+      padding: '2px 7px',
+      verticalAlign: 'middle',
+      letterSpacing: '0.03em',
+      marginLeft: 6
+    }
+  }, "build ", BUILD)), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: '#9aa0b5',
