@@ -68,9 +68,7 @@
 const SUPA_URL="https://snfedklqaalhwooqyzbf.supabase.co";
 const SUPA_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNuZmVka2xxYWFsaHdvb3F5emJmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI3ODQzMTcsImV4cCI6MjA5ODM2MDMxN30.yj9di1yRZXI5h7U-woNg-oe1EqyEQeRXAVTqgooNF4Y";
 const HDRS={apikey:SUPA_KEY,Authorization:"Bearer "+SUPA_KEY};
-// Paste your Slack Incoming Webhook URL between the quotes to enable "Give me a nudge".
-// Create one at api.slack.com/apps -> Incoming Webhooks. Leave blank to disable the button.
-const SLACK_WEBHOOK="";
+
 const DAYS=['sun','mon','tue','wed','thu','fri','sat'];
 const DAY_L=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const CAT_COL={NRL:'#dc2626',AFL:'#2563eb',NBA:'#7c3aed',MLB:'#0891b2',Racing:'#059669','Foxcatcher/StatMate':'#d97706','World Cup':'#0369a1',Other:'#6b7280'};
@@ -175,21 +173,13 @@ function nudgeButton(){
 function giveNudge(){
   var msg=prompt('Send a quick nudge to the PointsBet media team about '+NET_LABEL[NET]+'\u2019s MIs. Add a short note (optional):','');
   if(msg===null)return; // cancelled
-  var text=':wave: *'+NET_LABEL[NET]+'* nudged about Material Instructions (WC '+fmt(STATE.wc)+')'+(msg?'\n> '+msg:'');
   // 1) Always log the nudge into Supabase so it is never lost
   fetch(SUPA_URL+'/rest/v1/mi_nudges',{
     method:'POST',
     headers:Object.assign({},HDRS,{'Content-Type':'application/json','Prefer':'return=minimal'}),
     body:JSON.stringify([{net:NET,wc:STATE.wc,message:msg||'',at:new Date().toISOString()}])
   }).catch(function(){});
-  // 2) Fire to Slack if a webhook is configured
-  if(SLACK_WEBHOOK){
-    fetch(SLACK_WEBHOOK,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text})})
-      .then(function(){alert('\u2713 Nudge sent \u2014 the team has been notified.');})
-      .catch(function(){alert('\u2713 Nudge logged. (Slack notification could not be sent right now.)');});
-  } else {
-    alert('\u2713 Nudge logged for the PointsBet team.');
-  }
+  alert('\u2713 Nudge sent \u2014 the PointsBet media team will see it in the planner.');
 }
 
 function downloadXLSX(){
