@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>PointsBet · Material Instructions</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+  html,body{margin:0;background:linear-gradient(180deg,#f6f7fb 0%,#eef0f6 100%);min-height:100vh;font-family:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;color:#111827;}
+  .wrap{max-width:1200px;margin:0 auto;padding:0 18px 40px;}
+  .top{display:flex;justify-content:space-between;align-items:center;margin:0 -18px 20px;padding:18px 26px;background:linear-gradient(90deg,#0c0e1a 0%,#171a2e 100%);border-bottom:3px solid #EE1A42;box-shadow:0 4px 18px rgba(12,14,26,.25);}
+  .top h1{font-size:19px;font-weight:800;letter-spacing:-.4px;color:#fff;margin:0;}
+  .top h1 .r{color:#EE1A42;}
+  .top .sub{font-size:11px;color:#9aa0b5;margin-top:3px;}
+  .ro{font-size:10px;font-weight:700;color:#fff;background:#EE1A42;border-radius:5px;padding:3px 8px;letter-spacing:.06em;}
+  .controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px;}
+  .controls label{font-size:12px;color:#6b7280;font-weight:600;}
+  select,input[type=date]{border:1px solid #d1d5db;border-radius:8px;padding:6px 10px;font-size:13px;font-family:inherit;background:#fff;}
+  .card{background:#fff;border-radius:12px;box-shadow:0 1px 4px rgba(17,24,39,.08);overflow:hidden;margin-bottom:18px;}
+  .cardhead{background:#1d4ed8;color:#fff;padding:10px 16px;font-size:14px;font-weight:700;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th{background:#f9fafb;text-align:left;padding:8px 10px;font-size:11px;font-weight:700;color:#374151;border-bottom:1px solid #e5e7eb;white-space:nowrap;}
+  th.c{text-align:center;}
+  td{padding:7px 10px;border-bottom:1px solid #f1f2f5;vertical-align:middle;}
+  td.c{text-align:center;}
+  .key{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:700;font-size:11px;}
+  .cat{font-size:10px;padding:1px 7px;border-radius:8px;font-weight:700;}
+  .pct{font-weight:700;color:#1d4ed8;}
+  .off{color:#d1d5db;}
+  .note{font-size:9px;color:#92400e;font-style:italic;}
+  .msg{padding:40px 20px;text-align:center;color:#6b7280;font-size:14px;}
+  .foot{font-size:11px;color:#9ca3af;text-align:center;margin-top:20px;line-height:1.6;}
+  .badge{font-size:11px;font-weight:700;padding:3px 10px;border-radius:12px;background:#dcfce7;color:#166534;}
+  .rdcsec{border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;margin-bottom:14px;}
+  .rdchead{color:#fff;padding:8px 14px;font-weight:700;font-size:13px;display:flex;gap:12px;align-items:center;}
+  .rdchead .time{font-size:11px;opacity:.85;font-weight:400;}
+  .rdchead .booked{margin-left:auto;font-size:12px;background:rgba(255,255,255,.2);padding:2px 10px;border-radius:12px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div>
+      <h1>PointsBet <span class="r">Material Instructions</span> <span class="ro">READ ONLY</span></h1>
+      <div class="sub" id="subtitle">Loading…</div>
+    </div>
+    <div class="badge" id="livebadge" style="display:none">● Live</div>
+  </div>
+  <div class="controls" id="controls" style="display:none">
+    <label>Week commencing</label>
+    <input type="date" id="wcpick"/>
+    <span id="range" style="font-size:12px;color:#6b7280;"></span>
+  </div>
+  <div id="content"><div class="msg">Loading the latest instructions…</div></div>
+  <div class="foot" id="foot"></div>
+</div>
+
+<script>
+const SUPA_URL="https://snfedklqaalhwooqyzbf.supabase.co";
+const SUPA_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNuZmVka2xxYWFsaHdvb3F5emJmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI3ODQzMTcsImV4cCI6MjA5ODM2MDMxN30.yj9di1yRZXI5h7U-woNg-oe1EqyEQeRXAVTqgooNF4Y";
+const HDRS={apikey:SUPA_KEY,Authorization:"Bearer "+SUPA_KEY};
+const DAYS=['sun','mon','tue','wed','thu','fri','sat'];
+const DAY_L=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const CAT_COL={NRL:'#dc2626',AFL:'#2563eb',NBA:'#7c3aed',MLB:'#0891b2',Racing:'#059669','Foxcatcher/StatMate':'#d97706','World Cup':'#0369a1',Other:'#6b7280'};
+const NET_LABEL={fox:'Fox Footy',espn:'ESPN / Disney',rdc:'RDC',nine:'Nine Radio',sen:'SEN Radio',triplem:'Triple M'};
+const RDC_DAYPARTS=[
+ {k:'morning',label:'Morning Programming',time:'8am-11am',col:'#1e3a5f',booked:()=>'2.5 minutes'},
+ {k:'liveRaceday',label:'Live Raceday Broadcast',time:'11am-6pm',col:'#0f5132',booked:d=>d==='sat'?'2 minutes':'2.5 minutes'},
+ {k:'liveRacenight',label:'Live Racenight Broadcast',time:'Racenight',col:'#4a1a6e',booked:()=>'1min',daysOnly:['thu','fri']},
+ {k:'evening',label:'Evening Programing',time:'6pm-11pm',col:'#7c2d12',booked:()=>'2.5 minutes'},
+ {k:'lateNight',label:'Late Night Programming',time:'11pm-8am',col:'#374151',booked:()=>'BONUS'}
+];
+const fmt=s=>s?s.split('-').reverse().join('/'):'—';
+const fmtShort=s=>s?s.split('-').reverse().join('/').slice(0,5):'';
+function stripDur(t){return t?t.replace(/\s*:?\d+s?\s*$/,'').trim():'';}
+function currentWeekSunday(){var d=new Date();d.setDate(d.getDate()-d.getDay());var y=d.getFullYear(),m=('0'+(d.getMonth()+1)).slice(-2),dd=('0'+d.getDate()).slice(-2);return y+'-'+m+'-'+dd;}
+function weekDatesOf(wc){try{return DAYS.map(function(_,i){var d=new Date(wc);d.setDate(d.getDate()+i);return d.toISOString().split('T')[0];});}catch(e){return DAYS.map(()=>'');}}
+function dayEnabled(c,date){if(!date)return false;return (c.air||'0000-00-00')<=date && date<=(c.end||'9999-12-31');}
+
+var qs=new URLSearchParams(location.search);
+var NET=(qs.get('net')||'').toLowerCase();
+var STATE={main:null,cre:null,wc:currentWeekSunday()};
+
+if(!NET||!NET_LABEL[NET]){
+  document.getElementById('content').innerHTML='<div class="msg">This share link is missing its network. Please ask your PointsBet contact for the correct link (e.g. ending in <b>?net=fox</b>).</div>';
+  document.getElementById('subtitle').textContent='No network specified';
+} else {
+  document.getElementById('subtitle').textContent=NET_LABEL[NET]+' — live rotation instructions';
+  load();
+  setInterval(load,60000); // refresh every minute
+}
+
+function load(){
+  Promise.all([
+    fetch(SUPA_URL+'/rest/v1/mi_planner_state?id=eq.v2_main&select=data',{headers:HDRS}).then(r=>r.json()),
+    fetch(SUPA_URL+'/rest/v1/mi_planner_state?id=eq.v2_creatives&select=data',{headers:HDRS}).then(r=>r.json())
+  ]).then(function(res){
+    STATE.main=(res[0]&&res[0][0]&&res[0][0].data)||{};
+    STATE.cre=(res[1]&&res[1][0]&&res[1][0].data&&res[1][0].data.creatives)||[];
+    document.getElementById('livebadge').style.display='block';
+    document.getElementById('controls').style.display='flex';
+    var picker=document.getElementById('wcpick');
+    if(!picker.value)picker.value=STATE.wc;
+    picker.onchange=function(){STATE.wc=picker.value;render();};
+    render();
+  }).catch(function(){
+    document.getElementById('content').innerHTML='<div class="msg">Couldn\u2019t reach the instructions right now. Please try again shortly.</div>';
+  });
+}
+
+function creById(id){for(var i=0;i<STATE.cre.length;i++)if(STATE.cre[i].id===id)return STATE.cre[i];return null;}
+function creByKey(k){for(var i=0;i<STATE.cre.length;i++)if(STATE.cre[i].keyNumber===k)return STATE.cre[i];return null;}
+
+function render(){
+  var wc=STATE.wc, wd=weekDatesOf(wc);
+  document.getElementById('range').textContent=fmt(wc)+' – '+fmt(wd[6]||'');
+  document.getElementById('foot').innerHTML='Updates live — refresh anytime for the latest. Questions? Contact your PointsBet media team.<br>Last loaded '+new Date().toLocaleString();
+  if(NET==='rdc'){ renderRDC(wc,wd); return; }
+  renderGrid(wc,wd);
+}
+
+function renderGrid(wc,wd){
+  var rots=(STATE.main.rots&&STATE.main.rots[wc])||{};
+  var notes=(STATE.main.notes&&STATE.main.notes[wc])||{};
+  // active creatives ticked for this net with any allocation this week
+  var rows=STATE.cre.filter(function(c){
+    if(!(c.nets&&c.nets[NET]))return false;
+    return DAYS.some(function(d){ return rots[c.id]&&rots[c.id][NET]&&rots[c.id][NET][d]; });
+  });
+  if(!rows.length){
+    document.getElementById('content').innerHTML='<div class="msg">No '+NET_LABEL[NET]+' rotations are set for the week commencing '+fmt(wc)+' yet.<br>Check back soon or try another week.</div>';
+    return;
+  }
+  var CAT_ORDER=["NRL","AFL","NBA","MLB","Racing","Foxcatcher/StatMate","World Cup","Other"];
+  rows.sort(function(a,b){var ai=CAT_ORDER.indexOf(a.cat),bi=CAT_ORDER.indexOf(b.cat);if(ai!==bi)return ai-bi;return a.keyNumber<b.keyNumber?-1:1;});
+  var h='<div class="card"><div class="cardhead">'+NET_LABEL[NET]+' — Material Instructions — WC '+fmt(wc)+'</div><table><thead><tr>';
+  h+='<th>Key Number</th><th>Creative Title</th><th class="c">Dur</th><th>Category</th>';
+  DAY_L.forEach(function(l,i){h+='<th class="c">'+l+'<br><span style="font-weight:400;color:#9ca3af">'+fmtShort(wd[i]||'')+'</span></th>';});
+  h+='</tr></thead><tbody>';
+  rows.forEach(function(c){
+    h+='<tr><td class="key">'+c.keyNumber+'</td><td>'+(c.title||'')+'</td><td class="c">:'+c.dur+'</td>';
+    var col=CAT_COL[c.cat]||'#6b7280';
+    h+='<td><span class="cat" style="background:'+col+'22;color:'+col+'">'+c.cat+'</span></td>';
+    DAYS.forEach(function(d,i){
+      var en=dayEnabled(c,wd[i]||'');
+      var v=(rots[c.id]&&rots[c.id][NET]&&rots[c.id][NET][d])||'';
+      var nt=(notes[c.id]&&notes[c.id][d])||'';
+      if(!en){h+='<td class="c off">—</td>';}
+      else{h+='<td class="c">'+(v?'<span class="pct">'+v+'%</span>':'<span class="off">0%</span>')+(nt?'<div class="note">'+nt+'</div>':'')+'</td>';}
+    });
+    h+='</tr>';
+  });
+  h+='</tbody></table></div>';
+  document.getElementById('content').innerHTML=h;
+}
+
+function renderRDC(wc,wd){
+  var rdc=(STATE.main.rdcMI&&STATE.main.rdcMI[wc])||null;
+  if(!rdc){
+    document.getElementById('content').innerHTML='<div class="msg">No RDC material instructions are set for the week commencing '+fmt(wc)+' yet.</div>';
+    return;
+  }
+  var h='';
+  DAYS.forEach(function(day,di){
+    var dd=rdc[day]||{};
+    var hasAny=Object.keys(dd).some(function(k){return (dd[k]||[]).some(function(s){return s&&s.k;});});
+    if(!hasAny)return;
+    h+='<div class="card"><div class="cardhead">'+DAY_L[di]+' '+fmt(wd[di]||'')+'</div><div style="padding:12px">';
+    RDC_DAYPARTS.forEach(function(dp){
+      if(dp.daysOnly&&dp.daysOnly.indexOf(day)<0)return;
+      var spots=(dd[dp.k]||[]).filter(function(s){return s&&s.k;});
+      if(!spots.length)return;
+      h+='<div class="rdcsec"><div class="rdchead" style="background:'+dp.col+'"><span>'+dp.label+'</span><span class="time">'+dp.time+'</span><span class="booked">'+dp.booked(day)+'</span></div>';
+      h+='<table><thead><tr><th>Key Number</th><th>Title</th><th class="c">Dur</th><th class="c">Qty</th><th>Instructions</th></tr></thead><tbody>';
+      spots.forEach(function(sp){
+        var c=creByKey(sp.k);
+        h+='<tr><td class="key">'+sp.k+'</td><td>'+(sp.t||(c?stripDur(c.title):''))+'</td><td class="c">'+(c?':'+c.dur:'—')+'</td><td class="c">'+(sp.q||'1')+'</td><td>'+(sp.i||'')+'</td></tr>';
+      });
+      h+='</tbody></table></div>';
+    });
+    h+='</div></div>';
+  });
+  document.getElementById('content').innerHTML=h||'<div class="msg">No RDC spots booked for this week yet.</div>';
+}
+</script>
+</body>
+</html>
