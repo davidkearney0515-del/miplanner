@@ -29,6 +29,15 @@
   .off{color:#d1d5db;}
   .note{font-size:9px;color:#92400e;font-style:italic;}
   .msg{padding:40px 20px;text-align:center;color:#6b7280;font-size:14px;}
+ .toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;}
+  .btn{border:none;border-radius:9px;padding:9px 16px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;}
+  .btn.xls{background:#1d6f42;color:#fff;}
+  .btn.nudge{background:#EE1A42;color:#fff;}
+  .btn:hover{filter:brightness(1.07);}
+  .daycard{background:#fff;border-radius:12px;box-shadow:0 1px 4px rgba(17,24,39,.08);overflow:hidden;margin-bottom:16px;}
+  .dayhead{color:#C00000;font-weight:800;font-size:15px;padding:11px 16px 6px;}
+  table.xlsxtable th{background:#000;color:#fff;border:1px solid #333;}
+  table.xlsxtable td{border:1px solid #e5e7eb;}
   .foot{font-size:11px;color:#9ca3af;text-align:center;margin-top:20px;line-height:1.6;}
   .badge{font-size:11px;font-weight:700;padding:3px 10px;border-radius:12px;background:#dcfce7;color:#166534;}
   .rdcsec{border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;margin-bottom:14px;}
@@ -59,6 +68,9 @@
 const SUPA_URL="https://snfedklqaalhwooqyzbf.supabase.co";
 const SUPA_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNuZmVka2xxYWFsaHdvb3F5emJmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI3ODQzMTcsImV4cCI6MjA5ODM2MDMxN30.yj9di1yRZXI5h7U-woNg-oe1EqyEQeRXAVTqgooNF4Y";
 const HDRS={apikey:SUPA_KEY,Authorization:"Bearer "+SUPA_KEY};
+// Paste your Slack Incoming Webhook URL between the quotes to enable "Give me a nudge".
+// Create one at api.slack.com/apps -> Incoming Webhooks. Leave blank to disable the button.
+const SLACK_WEBHOOK="";
 const DAYS=['sun','mon','tue','wed','thu','fri','sat'];
 const DAY_L=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const CAT_COL={NRL:'#dc2626',AFL:'#2563eb',NBA:'#7c3aed',MLB:'#0891b2',Racing:'#059669','Foxcatcher/StatMate':'#d97706','World Cup':'#0369a1',Other:'#6b7280'};
@@ -122,36 +134,107 @@ function render(){
 function renderGrid(wc,wd){
   var rots=(STATE.main.rots&&STATE.main.rots[wc])||{};
   var notes=(STATE.main.notes&&STATE.main.notes[wc])||{};
-  // active creatives ticked for this net with any allocation this week
-  var rows=STATE.cre.filter(function(c){
-    if(!(c.nets&&c.nets[NET]))return false;
-    return DAYS.some(function(d){ return rots[c.id]&&rots[c.id][NET]&&rots[c.id][NET][d]; });
-  });
-  if(!rows.length){
-    document.getElementById('content').innerHTML='<div class="msg">No '+NET_LABEL[NET]+' rotations are set for the week commencing '+fmt(wc)+' yet.<br>Check back soon or try another week.</div>';
-    return;
-  }
   var CAT_ORDER=["NRL","AFL","NBA","MLB","Racing","Foxcatcher/StatMate","World Cup","Other"];
-  rows.sort(function(a,b){var ai=CAT_ORDER.indexOf(a.cat),bi=CAT_ORDER.indexOf(b.cat);if(ai!==bi)return ai-bi;return a.keyNumber<b.keyNumber?-1:1;});
-  var h='<div class="card"><div class="cardhead">'+NET_LABEL[NET]+' — Material Instructions — WC '+fmt(wc)+'</div><table><thead><tr>';
-  h+='<th>Key Number</th><th>Creative Title</th><th class="c">Dur</th><th>Category</th>';
-  DAY_L.forEach(function(l,i){h+='<th class="c">'+l+'<br><span style="font-weight:400;color:#9ca3af">'+fmtShort(wd[i]||'')+'</span></th>';});
-  h+='</tr></thead><tbody>';
-  rows.forEach(function(c){
-    h+='<tr><td class="key">'+c.keyNumber+'</td><td>'+(c.title||'')+'</td><td class="c">:'+c.dur+'</td>';
-    var col=CAT_COL[c.cat]||'#6b7280';
-    h+='<td><span class="cat" style="background:'+col+'22;color:'+col+'">'+c.cat+'</span></td>';
-    DAYS.forEach(function(d,i){
-      var en=dayEnabled(c,wd[i]||'');
+  var anyWeek=false;
+  var h='<div class="toolbar"><button class="btn xls" onclick="downloadXLSX()">\u2193 Download Excel</button>'+nudgeButton()+'</div>';
+  DAYS.forEach(function(d,i){
+    var date=wd[i]||'';
+    var dayRows=STATE.cre.filter(function(c){
+      if(!(c.nets&&c.nets[NET]))return false;
+      if(!dayEnabled(c,date))return false;
+      var v=(rots[c.id]&&rots[c.id][NET]&&rots[c.id][NET][d])||'';
+      return v&&parseFloat(v)>0;
+    });
+    if(!dayRows.length)return;
+    anyWeek=true;
+    dayRows.sort(function(a,b){var ai=CAT_ORDER.indexOf(a.cat),bi=CAT_ORDER.indexOf(b.cat);if(ai!==bi)return ai-bi;return a.keyNumber<b.keyNumber?-1:1;});
+    h+='<div class="daycard">';
+    h+='<div class="dayhead">'+DAY_L[i]+' '+fmt(date)+'</div>';
+    h+='<table class="xlsxtable"><thead><tr><th>Key Number</th><th>Creative Title</th><th class="c">Duration</th><th>Category</th><th class="c">Allocation</th><th>Notes</th></tr></thead><tbody>';
+    dayRows.forEach(function(c){
       var v=(rots[c.id]&&rots[c.id][NET]&&rots[c.id][NET][d])||'';
       var nt=(notes[c.id]&&notes[c.id][d])||'';
-      if(!en){h+='<td class="c off">—</td>';}
-      else{h+='<td class="c">'+(v?'<span class="pct">'+v+'%</span>':'<span class="off">0%</span>')+(nt?'<div class="note">'+nt+'</div>':'')+'</td>';}
+      var col=CAT_COL[c.cat]||'#6b7280';
+      h+='<tr><td class="key">'+c.keyNumber+'</td><td>'+(c.title||'')+'</td><td class="c">:'+c.dur+'</td>'
+       +'<td><span class="cat" style="background:'+col+'22;color:'+col+'">'+c.cat+'</span></td>'
+       +'<td class="c pct">'+v+'%</td><td>'+(nt||'')+'</td></tr>';
     });
-    h+='</tr>';
+    h+='</tbody></table></div>';
   });
-  h+='</tbody></table></div>';
+  if(!anyWeek){
+    document.getElementById('content').innerHTML='<div class="toolbar">'+nudgeButton()+'</div><div class="msg">No '+NET_LABEL[NET]+' rotations are set for the week commencing '+fmt(wc)+' yet.<br>Check back soon or try another week.</div>';
+    return;
+  }
   document.getElementById('content').innerHTML=h;
+}
+
+function nudgeButton(){
+  return '<button class="btn nudge" onclick="giveNudge()">\uD83D\uDC4B Give the team a nudge</button>';
+}
+
+function giveNudge(){
+  var msg=prompt('Send a quick nudge to the PointsBet media team about '+NET_LABEL[NET]+'\u2019s MIs. Add a short note (optional):','');
+  if(msg===null)return; // cancelled
+  var text=':wave: *'+NET_LABEL[NET]+'* nudged about Material Instructions (WC '+fmt(STATE.wc)+')'+(msg?'\n> '+msg:'');
+  // 1) Always log the nudge into Supabase so it is never lost
+  fetch(SUPA_URL+'/rest/v1/mi_nudges',{
+    method:'POST',
+    headers:Object.assign({},HDRS,{'Content-Type':'application/json','Prefer':'return=minimal'}),
+    body:JSON.stringify([{net:NET,wc:STATE.wc,message:msg||'',at:new Date().toISOString()}])
+  }).catch(function(){});
+  // 2) Fire to Slack if a webhook is configured
+  if(SLACK_WEBHOOK){
+    fetch(SLACK_WEBHOOK,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text})})
+      .then(function(){alert('\u2713 Nudge sent \u2014 the team has been notified.');})
+      .catch(function(){alert('\u2713 Nudge logged. (Slack notification could not be sent right now.)');});
+  } else {
+    alert('\u2713 Nudge logged for the PointsBet team.');
+  }
+}
+
+function downloadXLSX(){
+  var wc=STATE.wc, wd=weekDatesOf(wc);
+  var rots=(STATE.main.rots&&STATE.main.rots[wc])||{};
+  var notes=(STATE.main.notes&&STATE.main.notes[wc])||{};
+  var CAT_ORDER=["NRL","AFL","NBA","MLB","Racing","Foxcatcher/StatMate","World Cup","Other"];
+  // Build a Worksheet XML (SpreadsheetML) so it opens in Excel with basic formatting, no external lib
+  var rowsXml='';
+  function cell(v,styleId){ v=(v==null?'':String(v)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); return '<Cell'+(styleId?' ss:StyleID="'+styleId+'"':'')+'><Data ss:Type="String">'+v+'</Data></Cell>'; }
+  function row(cells){ return '<Row>'+cells+'</Row>'; }
+  rowsXml+=row(cell(NET_LABEL[NET]+' \u2014 Material Instructions \u2014 WC '+fmt(wc),'title'));
+  rowsXml+=row('');
+  DAYS.forEach(function(d,i){
+    var date=wd[i]||'';
+    var dayRows=STATE.cre.filter(function(c){ if(!(c.nets&&c.nets[NET]))return false; if(!dayEnabled(c,date))return false; var v=(rots[c.id]&&rots[c.id][NET]&&rots[c.id][NET][d])||''; return v&&parseFloat(v)>0; });
+    if(!dayRows.length)return;
+    dayRows.sort(function(a,b){var ai=CAT_ORDER.indexOf(a.cat),bi=CAT_ORDER.indexOf(b.cat);if(ai!==bi)return ai-bi;return a.keyNumber<b.keyNumber?-1:1;});
+    rowsXml+=row(cell(DAY_L[i]+' '+fmt(date),'date'));
+    rowsXml+=row(cell('Key Number','hdr')+cell('Creative Title','hdr')+cell('Duration','hdr')+cell('Category','hdr')+cell('Allocation','hdr')+cell('Notes','hdr'));
+    dayRows.forEach(function(c){
+      var v=(rots[c.id]&&rots[c.id][NET]&&rots[c.id][NET][d])||'';
+      var nt=(notes[c.id]&&notes[c.id][d])||'';
+      rowsXml+=row(cell(c.keyNumber)+cell(c.title||'')+cell(':'+c.dur)+cell(c.cat)+cell(v+'%')+cell(nt||''));
+    });
+    rowsXml+=row('');
+  });
+  var xml='<?xml version="1.0"?>\n<?mso-application progid="Excel.Sheet"?>\n'
+   +'<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">'
+   +'<Styles>'
+   +'<Style ss:ID="title"><Font ss:Bold="1" ss:Size="14" ss:Color="#C00000"/></Style>'
+   +'<Style ss:ID="date"><Font ss:Bold="1" ss:Size="12" ss:Color="#C00000"/></Style>'
+   +'<Style ss:ID="hdr"><Font ss:Bold="1" ss:Color="#FFFFFF"/><Interior ss:Color="#000000" ss:Pattern="Solid"/><Borders>'
+   +'<Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>'
+   +'<Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/></Borders></Style>'
+   +'</Styles>'
+   +'<Worksheet ss:Name="'+NET_LABEL[NET].replace(/[^A-Za-z0-9 ]/g,'').slice(0,28)+'"><Table>'
+   +'<Column ss:Width="120"/><Column ss:Width="260"/><Column ss:Width="60"/><Column ss:Width="120"/><Column ss:Width="70"/><Column ss:Width="160"/>'
+   +rowsXml+'</Table></Worksheet></Workbook>';
+  var blob=new Blob([xml],{type:'application/vnd.ms-excel'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a'); a.href=url;
+  a.download='PointsBet_MI_'+NET_LABEL[NET].replace(/[^A-Za-z0-9]/g,'_')+'_WC'+wc+'.xls';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){URL.revokeObjectURL(url);},150);
 }
 
 function renderRDC(wc,wd){
@@ -160,7 +243,7 @@ function renderRDC(wc,wd){
     document.getElementById('content').innerHTML='<div class="msg">No RDC material instructions are set for the week commencing '+fmt(wc)+' yet.</div>';
     return;
   }
-  var h='';
+  var h='<div class="toolbar"><button class="btn xls" onclick="downloadXLSX()">\u2193 Download Excel</button>'+nudgeButton()+'</div>';
   DAYS.forEach(function(day,di){
     var dd=rdc[day]||{};
     var hasAny=Object.keys(dd).some(function(k){return (dd[k]||[]).some(function(s){return s&&s.k;});});
