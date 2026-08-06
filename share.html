@@ -170,16 +170,15 @@ function nudgeButton(){
   return '<button class="btn nudge" onclick="giveNudge()">\uD83D\uDC4B Give the team a nudge</button>';
 }
 
+var NUDGE_EMAIL="david.kearney@pointsbet.com";
 function giveNudge(){
-  var msg=prompt('Send a quick nudge to the PointsBet media team about '+NET_LABEL[NET]+'\u2019s MIs. Add a short note (optional):','');
+  var msg=prompt('Send a quick nudge to the PointsBet media team about '+NET_LABEL[NET]+'\u2019s Material Instructions. Add a short note (optional):','');
   if(msg===null)return; // cancelled
-  // 1) Always log the nudge into Supabase so it is never lost
-  fetch(SUPA_URL+'/rest/v1/mi_nudges',{
-    method:'POST',
-    headers:Object.assign({},HDRS,{'Content-Type':'application/json','Prefer':'return=minimal'}),
-    body:JSON.stringify([{net:NET,wc:STATE.wc,message:msg||'',at:new Date().toISOString()}])
-  }).catch(function(){});
-  alert('\u2713 Nudge sent \u2014 the PointsBet media team will see it in the planner.');
+  var subject='MI Nudge \u2014 '+NET_LABEL[NET]+' (WC '+fmt(STATE.wc)+')';
+  var body='Hi David,\n\nJust a nudge regarding '+NET_LABEL[NET]+'\u2019s Material Instructions for the week commencing '+fmt(STATE.wc)+'.'+(msg?'\n\n'+msg:'')+'\n\nThanks';
+  var a=document.createElement('a');
+  a.href='mailto:'+NUDGE_EMAIL+'?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body);
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
 }
 
 function downloadXLSX(){

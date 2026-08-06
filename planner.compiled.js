@@ -2188,31 +2188,6 @@ function App() {
   var stViewSnap = useState(null),
     viewSnap = stViewSnap[0],
     setViewSnap = stViewSnap[1];
-  var stNudges = useState([]),
-    nudges = stNudges[0],
-    setNudges = stNudges[1];
-  var stNudgeSeen = useState(function () { try { return localStorage.getItem('mi2_nudge_seen') || ''; } catch (e) { return ''; } }),
-    nudgeSeen = stNudgeSeen[0],
-    setNudgeSeen = stNudgeSeen[1];
-  function fetchNudges() {
-    fetch(SUPA_URL + '/rest/v1/mi_nudges?select=id,net,wc,message,at&order=at.desc&limit=15', { headers: SUPA_HDRS })
-      .then(function (r) { return r.ok ? r.json() : []; })
-      .then(function (rows) { if (Array.isArray(rows)) setNudges(rows); })
-      .catch(function () {});
-  }
-  function dismissNudges() {
-    if (nudges.length) {
-      var latest = nudges[0].at || '';
-      setNudgeSeen(latest);
-      try { localStorage.setItem('mi2_nudge_seen', latest); } catch (e) {}
-    }
-  }
-  useEffect(function () {
-    if (!loaded) return;
-    fetchNudges();
-    var iv = setInterval(fetchNudges, 60000);
-    return function () { clearInterval(iv); };
-  }, [loaded]);
   function isWeekShape(o) {
     if (!o) return false;
     var ks = Object.keys(o);
@@ -4089,26 +4064,7 @@ function App() {
       borderRadius: 20,
       boxShadow: '0 2px 8px rgba(0,0,0,.25)'
     }
-  }, flash)), (function () {
-    var fresh = nudges.filter(function (n) { return (n.at || '') > (nudgeSeen || ''); });
-    if (!fresh.length) return null;
-    var NET_LABEL = { fox: 'Fox Footy', espn: 'ESPN/Disney', rdc: 'RDC', nine: 'Nine Radio', sen: 'SEN Radio', triplem: 'Triple M' };
-    return /*#__PURE__*/React.createElement("div", {
-      style: { display: 'flex', alignItems: 'flex-start', gap: 10, background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 12, padding: '12px 16px', marginBottom: 14 }
-    },
-    /*#__PURE__*/React.createElement("span", { style: { fontSize: 18 } }, "\uD83D\uDC4B"),
-    /*#__PURE__*/React.createElement("div", { style: { flex: 1 } },
-      /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 800, color: '#9a3412', marginBottom: 4 } }, fresh.length + " new nudge" + (fresh.length > 1 ? "s" : "") + " from publishers"),
-      fresh.slice(0, 6).map(function (n, i) {
-        return /*#__PURE__*/React.createElement("div", { key: i, style: { fontSize: 12, color: '#7c2d12', marginBottom: 2 } },
-          /*#__PURE__*/React.createElement("strong", null, NET_LABEL[n.net] || n.net),
-          " \u2014 WC " + fmt(n.wc) + " \u00b7 " + new Date(n.at).toLocaleString() + (n.message ? " \u2014 \u201c" + n.message + "\u201d" : "")
-        );
-      })
-    ),
-    /*#__PURE__*/React.createElement("button", { onClick: dismissNudges, style: { border: '1px solid #fdba74', background: '#fff', color: '#9a3412', borderRadius: 8, padding: '5px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' } }, "Mark seen")
-    );
-  })(), /*#__PURE__*/React.createElement("div", {
+  }, flash)), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 6,
