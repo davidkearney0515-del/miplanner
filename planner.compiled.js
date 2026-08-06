@@ -1963,603 +1963,6 @@ function RdcDaySection(props) {
     }, s.label, " (", s.count, ")");
   })))));
 }
-var SCRIPT_FORMATS = {
-  siposs: {
-    name: "Arryn Siposs — SEN Thursday SGM",
-    file: "SEN_Siposs_Script",
-    prompt: "You are writing an AFL Same Game Multi preview segment in the established Arryn Siposs SEN Thursday format. STRUCTURE: Match heading (Team A vs Team B). Brief 1-2 sentence intro setting the scene (form, injuries, venue, the angle). Then FOUR legs, each formatted exactly as: 'LEG [number]' on its own line, then the selection name + line + price (e.g. 'Sydney -23.5 (to cover the line) - $1.88'), then one sentence framing why the leg matters, then one or two short supporting reasons using recent form in 'X of last Y' style. Flag the longest-priced player prop as the value leg by adding '(Value)' after its price - usually Leg 4. Then a 'Pull Em' call-out paragraph identifying which leg is the early cash-out play (prefer a forward/goalscorer leg) with a specific half-time threshold for pulling it. Finish with 'Multi Summary' - a clean list of all four legs with NO prices - then 'Total Multi Price: $X.XX'. VOICE: conversational punter-to-punter. Always name the venue when it matters. RULES: NEVER invent or estimate any price or the total - only use prices visible in the screenshots; if a price or the total is not visible, write [PRICE NEEDED] and say so at the end. Only label a stat 'StatMate Hot Stat' if a StatMate callout is visible in a screenshot. Avoid 'set the tone', 'the leg the multi hinges on', 'W-W-W' notation, and 'inside the eight' (use 'holding onto a top eight spot'). If the game is too close to call, don't pick a winner - play the player markets instead. Don't mention ladder positions for Friday games if Thursday results could change them. Use **bold** only for the LEG headings and Total Multi Price. Output plain text with **bold** markers, no markdown headers, no bullets, no emojis."
-  },
-  jds: {
-    name: "Jules de Stoop — Pull Em SGM",
-    file: "SEN_JDS_PullEm_Script",
-    prompt: "You are writing an AFL Pull Em SGM script in the established Jules de Stoop format. STRUCTURE, in this exact order: Title line (Team A v Team B - day/night). Section 'The Game' as short dash bullets (match context, odds, ladder positions, team news). Section 'Pull Em Reminder' as dash bullets: 'Available on all AFL games across Round [X] and all matches for the 2026 World Cup' / 'Make sure you apply the Pull Em token in the bet slip' / 'Leg lacking heat, Pull Em and keep your multi alive'. Section 'My SGM Tonight': each leg as a **bold heading** (selection + price), followed by 1-2 dash bullets of form lines (say 'last 5 games' not 'last 5 goals'), and a 'StatMate Hot Stat:' bullet ONLY when a StatMate callout is visible in a screenshot (the stat text itself in **bold**). Then **Total Odds: $X.XX** in bold. Then 'So my SGM for this one is:' with a one-line concise recap of the legs. Close verbatim with: 'And remember Pull Em is exclusive to PointsBet and available for ALL WORLD CUP matches on top of the footy.' VOICE: first person, conversational footy banter, no corporate filler. RULES: Pull Em mechanic is removing one leg before the end of halftime with remaining legs re-pricing (minimum 4 legs, $5 total odds) - never describe it as cash back. NEVER invent or estimate leg prices or the total - only use what is visible in screenshots; write [PRICE NEEDED] for anything missing and flag it at the end. 'Huge outsiders' only for prices $3.50+, otherwise 'outsiders' or 'underdogs'. Prefer a player prop as the Pull Em watch leg over a team result leg. Vary phrasing if writing multiple games. Output plain text with **bold** markers and dash bullets only, no markdown headers, no emojis."
-  }
-};
-function scriptTextToHtml(t) {
-  var esc = t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  esc = esc.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
-  return esc.split(/\n/).map(function (line) {
-    return '<p style="margin:0 0 6pt 0;">' + (line.trim() === '' ? '&nbsp;' : line) + '</p>';
-  }).join('');
-}
-function ScriptStudio(props) {
-  var fmt = SCRIPT_FORMATS[props.format];
-  var stImgs = useState([]),
-    imgs = stImgs[0],
-    setImgs = stImgs[1];
-  var stNotes2 = useState(''),
-    snotes = stNotes2[0],
-    setSnotes = stNotes2[1];
-  var stOut = useState(''),
-    out = stOut[0],
-    setOut = stOut[1];
-  var stBusy = useState(false),
-    busy = stBusy[0],
-    setBusy = stBusy[1];
-  var stKey = useState(function () {
-      try {
-        return localStorage.getItem('mi2_anthropic_key') || '';
-      } catch (e) {
-        return '';
-      }
-    }),
-    apiKey = stKey[0],
-    setApiKey = stKey[1];
-  var stDrag = useState(false),
-    dragOver = stDrag[0],
-    setDragOver = stDrag[1];
-  var stErr = useState(''),
-    err = stErr[0],
-    setErr = stErr[1];
-  var stPE = useState(function () {
-      try {
-        var v = JSON.parse(localStorage.getItem('mi2_pullem') || 'null');
-        if (v) return v;
-      } catch (e) {}
-      return {
-        legs: '4',
-        odds: '5',
-        trigger: 'before the start of the third quarter',
-        scope: 'All AFL games',
-        round: '',
-        wc: true
-      };
-    }),
-    pe = stPE[0],
-    setPE = stPE[1];
-  function setPEField(k, v) {
-    setPE(function (p) {
-      var u = Object.assign({}, p);
-      u[k] = v;
-      try {
-        localStorage.setItem('mi2_pullem', JSON.stringify(u));
-      } catch (e) {}
-      return u;
-    });
-  }
-  function peAvailability() {
-    var base = pe.scope + (pe.round ? ' across Round ' + pe.round : '');
-    return base + (pe.wc ? ' and all matches for the 2026 World Cup' : '');
-  }
-  function peOffer() {
-    return 'CURRENT PULL EM OFFER — use these exact parameters everywhere the mechanic is referenced (reminder bullets, watch-leg call-outs, closer) and never any other numbers: minimum ' + pe.legs + ' legs, $' + pe.odds + '+ total odds, pull one leg ' + pe.trigger + ', available on ' + peAvailability() + '. The Pull Em Reminder availability line must read: "Available on ' + peAvailability() + '".' + (pe.wc ? '' : ' Do NOT mention the World Cup in the closer — adapt the closer to the current availability.');
-  }
-  function saveKey(v) {
-    setApiKey(v);
-    try {
-      localStorage.setItem('mi2_anthropic_key', v);
-    } catch (e) {}
-  }
-  function addFiles(files) {
-    Array.prototype.slice.call(files).forEach(function (f) {
-      if (!f.type || f.type.indexOf('image/') !== 0) return;
-      var r = new FileReader();
-      r.onload = function (ev) {
-        var dataUrl = ev.target.result;
-        setImgs(function (p) {
-          return p.concat([{
-            name: f.name,
-            media: f.type,
-            data: dataUrl.split(',')[1],
-            url: dataUrl
-          }]);
-        });
-      };
-      r.readAsDataURL(f);
-    });
-  }
-  function generate() {
-    setErr('');
-    if (!apiKey) {
-      setErr('Add your Anthropic API key first (one-time setup — see note below).');
-      return;
-    }
-    if (!imgs.length) {
-      setErr('Drop in at least one screenshot — bet slip, fixture or ladder.');
-      return;
-    }
-    setBusy(true);
-    var content = imgs.map(function (im) {
-      return {
-        type: 'image',
-        source: {
-          type: 'base64',
-          media_type: im.media,
-          data: im.data
-        }
-      };
-    });
-    var userText = 'Write the script(s) from these screenshots.' + (snotes ? ' Additional context from me: ' + snotes : '') + ' Remember: never invent prices.';
-    content.push({
-      type: 'text',
-      text: userText
-    });
-    fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 4000,
-        system: fmt.prompt + ' ' + peOffer(),
-        messages: [{
-          role: 'user',
-          content: content
-        }]
-      })
-    }).then(function (r) {
-      return r.json();
-    }).then(function (d) {
-      setBusy(false);
-      if (d && d.content) {
-        setOut(d.content.filter(function (b) {
-          return b.type === 'text';
-        }).map(function (b) {
-          return b.text;
-        }).join('\n'));
-      } else if (d && d.error) {
-        setErr('API error: ' + (d.error.message || d.error.type));
-      } else {
-        setErr('Unexpected response — try again.');
-      }
-    }).catch(function (e) {
-      setBusy(false);
-      setErr('Request failed: ' + e.message);
-    });
-  }
-  function copyForEmail() {
-    if (!out) return;
-    var html = '<div style="font-family:Calibri,sans-serif;font-size:11pt;color:#000;">' + scriptTextToHtml(out) + '</div>';
-    try {
-      var blob = new Blob([html], {
-        type: 'text/html'
-      });
-      var txt = new Blob([out.replace(/\*\*/g, '')], {
-        type: 'text/plain'
-      });
-      navigator.clipboard.write([new ClipboardItem({
-        'text/html': blob,
-        'text/plain': txt
-      })]).then(function () {
-        props.zap('\u2713 Copied — paste straight into your email');
-      }).catch(function () {
-        navigator.clipboard.writeText(out.replace(/\*\*/g, '')).then(function () {
-          props.zap('\u2713 Copied as plain text');
-        });
-      });
-    } catch (e) {
-      navigator.clipboard.writeText(out.replace(/\*\*/g, '')).then(function () {
-        props.zap('\u2713 Copied as plain text');
-      });
-    }
-  }
-  function exportWord() {
-    if (!out) return;
-    var html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"><title>' + fmt.file + '</title></head><body style="font-family:Calibri,sans-serif;font-size:10pt;color:#000;">' + scriptTextToHtml(out) + '</body></html>';
-    var blob = new Blob(['\ufeff' + html], {
-      type: 'application/msword'
-    });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement('a');
-    a.href = url;
-    a.download = fmt.file + '_' + new Date().toISOString().slice(0, 10) + '.doc';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(function () {
-      URL.revokeObjectURL(url);
-    }, 150);
-    props.zap('\u2713 Word doc downloaded — Calibri 10pt, plain');
-  }
-  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      backgroundColor: '#fff',
-      borderRadius: 14,
-      padding: '12px 16px',
-      marginBottom: 14,
-      boxShadow: '0 1px 4px rgba(17,24,39,.07)',
-      display: 'flex',
-      gap: 14,
-      flexWrap: 'wrap',
-      alignItems: 'flex-end'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      fontWeight: 800,
-      color: '#EE1A42',
-      textTransform: 'uppercase',
-      letterSpacing: '0.06em',
-      paddingBottom: 7
-    }
-  }, "Pull Em offer"), /*#__PURE__*/React.createElement("label", {
-    style: {
-      fontSize: 11,
-      color: '#6b7280'
-    }
-  }, "Min legs", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("input", {
-    type: "number",
-    min: 2,
-    max: 10,
-    value: pe.legs,
-    onChange: function (e) {
-      setPEField('legs', e.target.value);
-    },
-    style: {
-      width: 58,
-      border: '1px solid #d1d5db',
-      padding: '5px 7px',
-      fontSize: 12,
-      marginTop: 2
-    }
-  })), /*#__PURE__*/React.createElement("label", {
-    style: {
-      fontSize: 11,
-      color: '#6b7280'
-    }
-  }, "Min total odds $", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("input", {
-    type: "number",
-    min: 1,
-    step: 0.5,
-    value: pe.odds,
-    onChange: function (e) {
-      setPEField('odds', e.target.value);
-    },
-    style: {
-      width: 64,
-      border: '1px solid #d1d5db',
-      padding: '5px 7px',
-      fontSize: 12,
-      marginTop: 2
-    }
-  })), /*#__PURE__*/React.createElement("label", {
-    style: {
-      fontSize: 11,
-      color: '#6b7280'
-    }
-  }, "Pull trigger", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("input", {
-    value: pe.trigger,
-    onChange: function (e) {
-      setPEField('trigger', e.target.value);
-    },
-    style: {
-      width: 220,
-      border: '1px solid #d1d5db',
-      padding: '5px 7px',
-      fontSize: 12,
-      marginTop: 2
-    }
-  })), /*#__PURE__*/React.createElement("label", {
-    style: {
-      fontSize: 11,
-      color: '#6b7280'
-    }
-  }, "Availability", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("select", {
-    value: pe.scope,
-    onChange: function (e) {
-      setPEField('scope', e.target.value);
-    },
-    style: {
-      border: '1px solid #d1d5db',
-      padding: '5px 7px',
-      fontSize: 12,
-      marginTop: 2
-    }
-  }, /*#__PURE__*/React.createElement("option", null, "All AFL games"), /*#__PURE__*/React.createElement("option", null, "Selected AFL games"), /*#__PURE__*/React.createElement("option", null, "All NRL games"), /*#__PURE__*/React.createElement("option", null, "Selected NRL games"), /*#__PURE__*/React.createElement("option", null, "All World Cup matches"))), /*#__PURE__*/React.createElement("label", {
-    style: {
-      fontSize: 11,
-      color: '#6b7280'
-    }
-  }, "Round", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("input", {
-    value: pe.round,
-    onChange: function (e) {
-      setPEField('round', e.target.value);
-    },
-    placeholder: "17",
-    style: {
-      width: 52,
-      border: '1px solid #d1d5db',
-      padding: '5px 7px',
-      fontSize: 12,
-      marginTop: 2
-    }
-  })), /*#__PURE__*/React.createElement("label", {
-    style: {
-      fontSize: 11,
-      color: '#6b7280',
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: 5,
-      paddingBottom: 7,
-      cursor: 'pointer'
-    }
-  }, /*#__PURE__*/React.createElement("input", {
-    type: "checkbox",
-    checked: !!pe.wc,
-    onChange: function (e) {
-      setPEField('wc', e.target.checked);
-    }
-  }), "+ World Cup"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 10,
-      color: '#9ca3af',
-      flexBasis: '100%'
-    }
-  }, "Scripts will say: min ", pe.legs, " legs · $", pe.odds, "+ total odds · pull one leg ", pe.trigger, " · \"Available on ", peAvailability(), "\"")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'grid',
-      gridTemplateColumns: '380px 1fr',
-      gap: 16,
-      alignItems: 'start'
-    }
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    onDragOver: function (e) {
-      e.preventDefault();
-      setDragOver(true);
-    },
-    onDragLeave: function () {
-      setDragOver(false);
-    },
-    onDrop: function (e) {
-      e.preventDefault();
-      setDragOver(false);
-      addFiles(e.dataTransfer.files);
-    },
-    style: {
-      border: '2px dashed ' + (dragOver ? '#EE1A42' : '#c9cdd8'),
-      borderRadius: 14,
-      padding: '26px 16px',
-      textAlign: 'center',
-      backgroundColor: dragOver ? '#fff5f7' : '#fff',
-      transition: 'all .15s',
-      marginBottom: 10
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 26,
-      marginBottom: 6
-    }
-  }, "📸"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 13,
-      fontWeight: 700,
-      color: '#111827'
-    }
-  }, "Drop bet slip, fixture & ladder screenshots"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: '#9ca3af',
-      margin: '4px 0 10px'
-    }
-  }, "or"), /*#__PURE__*/React.createElement("label", {
-    style: {
-      backgroundColor: '#111827',
-      color: '#fff',
-      borderRadius: 8,
-      padding: '7px 16px',
-      fontSize: 12,
-      fontWeight: 700,
-      cursor: 'pointer'
-    }
-  }, "Browse files", /*#__PURE__*/React.createElement("input", {
-    type: "file",
-    accept: "image/*",
-    multiple: true,
-    onChange: function (e) {
-      addFiles(e.target.files);
-      e.target.value = '';
-    },
-    style: {
-      display: 'none'
-    }
-  }))), imgs.length > 0 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(3,1fr)',
-      gap: 6,
-      marginBottom: 10
-    }
-  }, imgs.map(function (im, i) {
-    return /*#__PURE__*/React.createElement("div", {
-      key: i,
-      style: {
-        position: 'relative',
-        borderRadius: 8,
-        overflow: 'hidden',
-        border: '1px solid #e5e7eb'
-      }
-    }, /*#__PURE__*/React.createElement("img", {
-      src: im.url,
-      style: {
-        width: '100%',
-        height: 74,
-        objectFit: 'cover',
-        display: 'block'
-      }
-    }), /*#__PURE__*/React.createElement("button", {
-      onClick: function () {
-        setImgs(function (p) {
-          return p.filter(function (_, j) {
-            return j !== i;
-          });
-        });
-      },
-      style: {
-        position: 'absolute',
-        top: 2,
-        right: 2,
-        background: 'rgba(12,14,26,.75)',
-        color: '#fff',
-        border: 'none',
-        borderRadius: 5,
-        fontSize: 10,
-        padding: '2px 6px',
-        cursor: 'pointer'
-      }
-    }, "✕"));
-  })), /*#__PURE__*/React.createElement("textarea", {
-    value: snotes,
-    onChange: function (e) {
-      setSnotes(e.target.value);
-    },
-    placeholder: "Optional notes — venue, team news, the angle you're leaning toward, anything not in the screenshots…",
-    style: {
-      width: '100%',
-      minHeight: 70,
-      border: '1px solid #d1d5db',
-      padding: '8px 10px',
-      fontSize: 12,
-      boxSizing: 'border-box',
-      resize: 'vertical',
-      marginBottom: 10
-    }
-  }), /*#__PURE__*/React.createElement("button", {
-    onClick: generate,
-    disabled: busy,
-    style: {
-      width: '100%',
-      background: busy ? '#9ca3af' : 'linear-gradient(90deg,#EE1A42,#c8123a)',
-      color: '#fff',
-      border: 'none',
-      borderRadius: 10,
-      padding: '11px',
-      fontSize: 13,
-      fontWeight: 800,
-      cursor: busy ? 'default' : 'pointer',
-      letterSpacing: '0.02em'
-    }
-  }, busy ? 'Writing… (10–20 sec)' : '✍ Write the Script'), err && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: 8,
-      fontSize: 12,
-      color: '#991b1b',
-      backgroundColor: '#fee2e2',
-      borderRadius: 8,
-      padding: '8px 10px'
-    }
-  }, err), /*#__PURE__*/React.createElement("details", {
-    style: {
-      marginTop: 12,
-      fontSize: 11,
-      color: '#6b7280'
-    }
-  }, /*#__PURE__*/React.createElement("summary", {
-    style: {
-      cursor: 'pointer',
-      fontWeight: 700
-    }
-  }, "⚙ API key (one-time setup)"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: 8
-    }
-  }, /*#__PURE__*/React.createElement("input", {
-    type: "password",
-    value: apiKey,
-    onChange: function (e) {
-      saveKey(e.target.value);
-    },
-    placeholder: "sk-ant-…",
-    style: {
-      width: '100%',
-      border: '1px solid #d1d5db',
-      padding: '7px 9px',
-      fontSize: 12,
-      boxSizing: 'border-box'
-    }
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: 6,
-      lineHeight: 1.5
-    }
-  }, "Script writing runs on Claude and needs an Anthropic API key. Create one at console.anthropic.com → API Keys. It's stored only in this browser — never synced or shared with anyone else using the planner.")))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 8,
-      marginBottom: 8
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: copyForEmail,
-    disabled: !out,
-    style: {
-      backgroundColor: out ? '#111827' : '#e5e7eb',
-      color: out ? '#fff' : '#9ca3af',
-      border: 'none',
-      borderRadius: 8,
-      padding: '7px 16px',
-      fontSize: 12,
-      fontWeight: 700,
-      cursor: out ? 'pointer' : 'default'
-    }
-  }, "📋 Copy for Email"), /*#__PURE__*/React.createElement("button", {
-    onClick: exportWord,
-    disabled: !out,
-    style: {
-      backgroundColor: out ? '#1d4ed8' : '#e5e7eb',
-      color: out ? '#fff' : '#9ca3af',
-      border: 'none',
-      borderRadius: 8,
-      padding: '7px 16px',
-      fontSize: 12,
-      fontWeight: 700,
-      cursor: out ? 'pointer' : 'default'
-    }
-  }, "⬇ Export to Word"), out && /*#__PURE__*/React.createElement("button", {
-    onClick: function () {
-      setOut('');
-    },
-    style: {
-      backgroundColor: '#fff',
-      color: '#6b7280',
-      border: '1px solid #d1d5db',
-      borderRadius: 8,
-      padding: '7px 14px',
-      fontSize: 12,
-      cursor: 'pointer'
-    }
-  }, "Clear")), /*#__PURE__*/React.createElement("textarea", {
-    value: out,
-    onChange: function (e) {
-      setOut(e.target.value);
-    },
-    placeholder: 'The ' + fmt.name + ' script lands here — fully editable before you copy or export. Prices only ever come from your screenshots; anything missing is flagged as [PRICE NEEDED].',
-    style: {
-      width: '100%',
-      minHeight: 520,
-      border: '1px solid #d1d5db',
-      padding: '14px 16px',
-      fontSize: 13,
-      lineHeight: 1.55,
-      boxSizing: 'border-box',
-      resize: 'vertical',
-      backgroundColor: '#fff',
-      fontFamily: 'Calibri,Inter,sans-serif'
-    }
-  }))));
-}
 function ContactEditor(props) {
   var net = props.net,
     cfg = props.cfg || {},
@@ -2682,7 +2085,7 @@ function ContactEditor(props) {
         fontSize: 12,
         cursor: 'pointer'
       }
-    }, "\\u2715"));
+    }, "\u2715"));
   })), /*#__PURE__*/React.createElement("button", {
     onClick: function () {
       commit(rows.concat([{
@@ -2707,7 +2110,7 @@ function ContactEditor(props) {
       color: '#9ca3af',
       marginTop: 4
     }
-  }, "First \"To\" person\\u2019s name is used for the email greeting and rotation updates."));
+  }, "First \"To\" person\u2019s name is used for the email greeting and rotation updates."));
 }
 function App() {
   var stTab = useState('library'),
@@ -3856,9 +3259,63 @@ function App() {
       return false;
     }
   }
+  function exportGridXLSX(net) {
+    try {
+      var rows = outRows(net);
+      var lbl = (NETS.find(function (n) { return n.k === net; }) || { label: net }).label;
+      var XLSX = getXLSX();
+      var hasStyles = XLSX !== XLSX_NPM;
+      var aoa = [], meta = [];
+      function push(arr, m) { aoa.push(arr); meta.push(m || { type: 'blank' }); }
+      push([lbl + ' \u2014 Material Instructions \u2014 WC ' + fmt(wc)], { type: 'title' });
+      push([], { type: 'blank' });
+      var any = false;
+      DAYS.forEach(function (day, i) {
+        var date = weekDates[i] || '';
+        var dayRows = rows.filter(function (r) { return dayEnabled(r, date) && (parseFloat(getDR(r.id, net, day)) || 0) > 0; });
+        if (!dayRows.length) return;
+        any = true;
+        push([DAY_L[i] + ' ' + fmt(date)], { type: 'date' });
+        push(['Key Number', 'Creative Title', 'Duration', 'Category', 'Allocation', 'Notes'], { type: 'header' });
+        dayRows.forEach(function (r) {
+          push([r.keyNumber, r.title, ':' + r.dur, r.cat, getDR(r.id, net, day) + '%', getNote(r.id, day) || ''], { type: 'spot' });
+        });
+        push([], { type: 'blank' });
+      });
+      if (!any) { zap('\u26A0 No ' + lbl + ' spots allocated this week'); return false; }
+      var ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws['!cols'] = [{ wch: 20 }, { wch: 44 }, { wch: 10 }, { wch: 20 }, { wch: 12 }, { wch: 26 }];
+      if (hasStyles) {
+        var thin = { style: 'thin', color: { rgb: '000000' } };
+        var border = { top: thin, bottom: thin, left: thin, right: thin };
+        var BLACK = '000000', WHITE = 'FFFFFF', RED = 'C00000';
+        function cell(r, c) { var a = XLSX.utils.encode_cell({ r: r, c: c }); if (!ws[a]) ws[a] = { t: 's', v: '' }; return ws[a]; }
+        for (var r = 0; r < meta.length; r++) {
+          var m = meta[r];
+          if (m.type === 'title') { var t0 = cell(r, 0); t0.s = { font: { bold: true, sz: 14, color: { rgb: RED } } }; }
+          else if (m.type === 'date') { var d0 = cell(r, 0); d0.s = { font: { bold: true, sz: 12, color: { rgb: RED } } }; }
+          else if (m.type === 'header') { for (var c = 0; c < 6; c++) { var hc = cell(r, c); hc.s = { font: { bold: true, color: { rgb: WHITE }, sz: 11 }, fill: { fgColor: { rgb: BLACK } }, alignment: { horizontal: c === 4 ? 'center' : 'left', vertical: 'center' }, border: border }; } }
+          else if (m.type === 'spot') { for (var c2 = 0; c2 < 6; c2++) { var sc = cell(r, c2); sc.s = { font: { color: { rgb: BLACK }, sz: 11 }, alignment: { horizontal: c2 === 4 ? 'center' : 'left', vertical: 'center' }, border: border }; } }
+        }
+      }
+      var wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, lbl.slice(0, 28));
+      var wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      var blob = new Blob([wbout], { type: 'application/octet-stream' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'PointsBet_MI_' + lbl.replace(/[^a-zA-Z0-9]/g, '_') + '_WC' + wc + '.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 150);
+      return true;
+    } catch (e) { zap('\u26A0 Export failed'); return false; }
+  }
   function prepareEmail(net, opts) {
     opts = opts || {};
-    var ok = net === 'rdc' ? exportRDCMI(opts.subset, opts.suffix) : exportCSV(net);
+    var ok = net === 'rdc' ? exportRDCMI(opts.subset, opts.suffix) : (net === 'fox' || net === 'espn') ? exportGridXLSX(net) : exportCSV(net);
     if (!ok) return;
     var cfg = emailConfig[net];
     if (!cfg || !cfg.to) {
@@ -4678,13 +4135,7 @@ function App() {
     style: {
       display: 'none'
     }
-  })))), tab === 'siposs' && /*#__PURE__*/React.createElement(ScriptStudio, {
-    format: "siposs",
-    zap: zap
-  }), tab === 'jds' && /*#__PURE__*/React.createElement(ScriptStudio, {
-    format: "jds",
-    zap: zap
-  }), tab === 'send' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  })))), tab === 'send' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -5747,7 +5198,7 @@ function App() {
     nets: platformNets
   }), /*#__PURE__*/React.createElement("button", {
     onClick: function () {
-      var ok = exportCSV(outNet);
+      var ok = (outNet === 'fox' || outNet === 'espn') ? exportGridXLSX(outNet) : exportCSV(outNet);
       if (ok) zap('✓ Exported ' + (NETS.find(function (n) {
         return n.k === outNet;
       }) || {
@@ -5764,7 +5215,7 @@ function App() {
       cursor: 'pointer',
       fontWeight: 700
     }
-  }, "↓ Export CSV"), /*#__PURE__*/React.createElement("span", {
+  }, (outNet === 'fox' || outNet === 'espn') ? "\u2193 Export Excel" : "\u2193 Export CSV"), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 11,
       color: '#6b7280'
@@ -6298,7 +5749,7 @@ function App() {
       cursor: 'pointer',
       fontWeight: 700
     }
-  }, "✉ Prepare Email & Download ", emailNet === 'rdc' ? 'RDC MI' : 'CSV'), /*#__PURE__*/React.createElement("button", {
+  }, "✉ Prepare Email & Download ", emailNet === 'rdc' ? 'RDC MI' : (emailNet === 'fox' || emailNet === 'espn') ? 'Excel' : 'CSV'), /*#__PURE__*/React.createElement("button", {
     onClick: function () {
       var net = emailNet;
       setEmailConfig(function (p) {
