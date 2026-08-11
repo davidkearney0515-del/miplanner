@@ -56,11 +56,12 @@ const SV = "5";
 const BUILD = "11 Aug 2026";
 const fmt = s => s ? s.split('-').reverse().join('/') : '—';
 const fmtShort = s => s ? s.split('-').reverse().join('/').slice(0, 5) : '';
-const CATS = ["AFL", "NRL", "NBA", "MLB", "Racing", "Foxcatcher/StatMate", "World Cup", "Other"];
-const CAT_ORDER = ["NRL", "AFL", "NBA", "MLB", "Racing", "Foxcatcher/StatMate", "World Cup", "Other"];
+const CATS = ["AFL", "NRL", "NFL", "NBA", "MLB", "Racing", "Foxcatcher/StatMate", "World Cup", "Other"];
+const CAT_ORDER = ["NRL", "AFL", "NFL", "NBA", "MLB", "Racing", "Foxcatcher/StatMate", "World Cup", "Other"];
 const CAT_COL = {
   NRL: '#dc2626',
   AFL: '#2563eb',
+  NFL: '#013369',
   NBA: '#7c3aed',
   MLB: '#0891b2',
   Racing: '#059669',
