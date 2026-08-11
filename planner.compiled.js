@@ -130,6 +130,16 @@ const BLANK = {
 };
 const DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 const DAY_L = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const US_SHOWTYPES = [
+  { k: 'nbaLive', label: 'NBA \u2014 Live', sport: 'NBA', tier: 'live', pair: 'nbaAnc', col: '#C8102E', tint: '#F4C7CE' },
+  { k: 'nbaAnc', label: 'NBA \u2014 Ancillary', sport: 'NBA', tier: 'anc', col: '#E8798A', tint: '#F9E2E6' },
+  { k: 'nflLive', label: 'NFL \u2014 Live', sport: 'NFL', tier: 'live', pair: 'nflAnc', col: '#013369', tint: '#B9C6DA' },
+  { k: 'nflAnc', label: 'NFL \u2014 Ancillary', sport: 'NFL', tier: 'anc', col: '#5B7BA6', tint: '#DCE4EF' },
+  { k: 'mlbLive', label: 'MLB \u2014 Live', sport: 'MLB', tier: 'live', pair: 'mlbAnc', col: '#0C7C59', tint: '#BFE3D5' },
+  { k: 'mlbAnc', label: 'MLB \u2014 Ancillary', sport: 'MLB', tier: 'anc', col: '#5DA88C', tint: '#DDEFE7' },
+  { k: 'other', label: 'Other Programming', sport: 'Other', tier: 'live', col: '#B58A00', tint: '#EFE1B3' }
+];
+const US_SPORT_ORDER = ['NFL', 'NBA', 'MLB', 'Racing', 'Foxcatcher/StatMate', 'AFL', 'NRL', 'World Cup', 'Other'];
 const RDC_DAYPARTS = [{
   k: 'morning',
   label: 'Morning Programming',
@@ -2108,6 +2118,117 @@ function ContactEditor(props) {
     }
   }, "First \"To\" person\u2019s name is used for the email greeting and rotation updates."));
 }
+function USSports(props) {
+  var wc = props.wc, setWc = props.setWc, fmt = props.fmt, creatives = props.creatives;
+  var US_SHOWTYPES = props.US_SHOWTYPES, US_SPORT_ORDER = props.US_SPORT_ORDER;
+  var isUsOn = props.isUsOn, toggleUsOn = props.toggleUsOn, usActiveShowtypes = props.usActiveShowtypes;
+  var usPct = props.usPct, setUsPctWithPair = props.setUsPctWithPair, usColTotal = props.usColTotal;
+  var syncAncFromLive = props.syncAncFromLive, usCreativesFor = props.usCreativesFor, exportUsXLSX = props.exportUsXLSX;
+  var CAT_COL = props.CAT_COL, stripDur = props.stripDur;
+  var h = React.createElement;
+  var st1 = useState(null), activeCol = st1[0], setActiveCol = st1[1];
+  var active = usActiveShowtypes();
+  // Default the editing column to the first active show type
+  var editKey = activeCol && active.some(function (s) { return s.k === activeCol; }) ? activeCol : (active[0] ? active[0].k : null);
+  var editSt = US_SHOWTYPES.find(function (s) { return s.k === editKey; });
+  var espnCre = creatives.filter(function (c) { return c.nets && c.nets.espn; });
+
+  // Toggle strip
+  var toggleStrip = h('div', { style: { background: '#fff', borderRadius: 12, padding: '12px 16px', marginBottom: 14, boxShadow: '0 1px 4px rgba(17,24,39,.07)' } },
+    h('div', { style: { fontSize: 11, fontWeight: 800, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 10 } }, 'On-air this week \u2014 toggle the show types running'),
+    h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+      US_SHOWTYPES.map(function (s) {
+        var on = isUsOn(s.k);
+        return h('button', {
+          key: s.k, onClick: function () { toggleUsOn(s.k); },
+          style: {
+            border: '2px solid ' + s.col, borderRadius: 20, padding: '6px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+            background: on ? s.col : '#fff', color: on ? '#fff' : s.col
+          }
+        }, (on ? '\u25CF ' : '\u25CB ') + s.label);
+      })
+    )
+  );
+
+  // Column selector (which show type you're editing)
+  var colSelector = active.length ? h('div', { style: { display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' } },
+    h('span', { style: { fontSize: 12, fontWeight: 600, color: '#6b7280' } }, 'Editing rotation for:'),
+    active.map(function (s) {
+      var sel = s.k === editKey;
+      return h('button', {
+        key: s.k, onClick: function () { setActiveCol(s.k); },
+        style: { border: '1px solid ' + s.col, borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer', background: sel ? s.col : '#fff', color: sel ? '#fff' : s.col }
+      }, s.label);
+    }),
+    editSt && editSt.pair ? h('button', {
+      onClick: function () { syncAncFromLive(editKey); },
+      title: 'Copy this Live rotation into its Ancillary pair',
+      style: { marginLeft: 'auto', border: '1px solid #d1d5db', borderRadius: 8, padding: '6px 12px', fontSize: 12, cursor: 'pointer', background: '#fff', color: '#374151' }
+    }, '\u21BB Match Ancillary to Live') : null
+  ) : null;
+
+  // Editing grid for the selected show type
+  var grid = null;
+  if (editKey) {
+    var total = usColTotal(editKey);
+    var totColour = total === 100 ? '#059669' : (total > 100 ? '#dc2626' : '#b45309');
+    var rowsBySport = {};
+    espnCre.forEach(function (c) { (rowsBySport[c.cat] = rowsBySport[c.cat] || []).push(c); });
+    var body = [];
+    US_SPORT_ORDER.forEach(function (sport) {
+      var grp = (rowsBySport[sport] || []).sort(function (a, b) { return a.keyNumber < b.keyNumber ? -1 : 1; });
+      if (!grp.length) return;
+      var col = CAT_COL[sport] || '#6b7280';
+      body.push(h('tr', { key: 'sp-' + sport }, h('td', { colSpan: 4, style: { background: col + '18', color: col, fontWeight: 800, fontSize: 11, padding: '5px 10px', textTransform: 'uppercase', letterSpacing: '.04em' } }, sport)));
+      grp.forEach(function (c) {
+        body.push(h('tr', { key: c.id, style: { borderTop: '1px solid #f1f2f5' } },
+          h('td', { style: { padding: '5px 10px', fontFamily: 'ui-monospace,Menlo,monospace', fontWeight: 700, fontSize: 11 } }, c.keyNumber),
+          h('td', { style: { padding: '5px 10px', fontSize: 12 } }, stripDur(c.title)),
+          h('td', { style: { padding: '5px 10px', textAlign: 'center', fontSize: 12, color: '#6b7280' } }, ':' + c.dur),
+          h('td', { style: { padding: '5px 10px', textAlign: 'center' } },
+            h('input', {
+              value: usPct(editKey, c.id), onChange: function (e) { setUsPctWithPair(editKey, c.id, e.target.value); },
+              placeholder: '%', style: { width: 56, border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 6px', fontSize: 12, textAlign: 'center' }
+            })
+          )
+        ));
+      });
+    });
+    grid = h('div', { style: { background: '#fff', borderRadius: 12, boxShadow: '0 1px 4px rgba(17,24,39,.07)', overflow: 'hidden' } },
+      h('div', { style: { padding: '10px 16px', background: editSt.col, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
+        h('span', { style: { fontWeight: 800, fontSize: 14 } }, editSt.label + ' \u2014 rotation'),
+        h('span', { style: { fontSize: 12, fontWeight: 700, background: 'rgba(255,255,255,.2)', borderRadius: 12, padding: '2px 10px' } }, 'Total: ' + total + '%')
+      ),
+      h('div', { style: { fontSize: 11, color: totColour, padding: '6px 16px', background: '#fafafa' } },
+        total === 100 ? '\u2713 Adds to 100%' : (total > 100 ? '\u26A0 Over 100% \u2014 trim ' + (total - 100) + '%' : 'Add ' + (100 - total) + '% more to reach 100%')),
+      h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
+        h('thead', null, h('tr', null,
+          h('th', { style: { textAlign: 'left', padding: '7px 10px', fontSize: 11, color: '#374151', background: '#f9fafb' } }, 'Key'),
+          h('th', { style: { textAlign: 'left', padding: '7px 10px', fontSize: 11, color: '#374151', background: '#f9fafb' } }, 'Creative'),
+          h('th', { style: { textAlign: 'center', padding: '7px 10px', fontSize: 11, color: '#374151', background: '#f9fafb' } }, 'Dur'),
+          h('th', { style: { textAlign: 'center', padding: '7px 10px', fontSize: 11, color: '#374151', background: '#f9fafb', width: 90 } }, 'Rotation'))),
+        h('tbody', null, body)
+      )
+    );
+  }
+
+  var emptyMsg = !active.length ? h('div', { style: { background: '#fff', borderRadius: 12, padding: '40px 20px', textAlign: 'center', color: '#6b7280', fontSize: 14, boxShadow: '0 1px 4px rgba(17,24,39,.07)' } },
+    'No show types are toggled on for this week. Flip on the ones on-air above (e.g. NFL \u2014 Live) to start building rotations.') : null;
+
+  return h('div', null,
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, flexWrap: 'wrap' } },
+      h('span', { style: { fontSize: 13, fontWeight: 600 } }, 'Week commencing:'),
+      h('input', { type: 'date', value: wc, onChange: function (e) { setWc(e.target.value); }, style: { border: '1px solid #d1d5db', borderRadius: 8, padding: '6px 10px', fontSize: 13 } }),
+      h('span', { style: { fontSize: 11, color: '#9ca3af' } }, 'ESPN only \u2014 show-type rotations. A creative can sit in every active show type at its own %.'),
+      active.length ? h('button', { onClick: exportUsXLSX, style: { marginLeft: 'auto', background: '#1d6f42', color: '#fff', border: 'none', borderRadius: 9, padding: '8px 16px', fontSize: 13, fontWeight: 800, cursor: 'pointer' } }, '\u2193 Export ESPN Excel') : null
+    ),
+    toggleStrip,
+    colSelector,
+    grid,
+    emptyMsg
+  );
+}
+
 function App() {
   var stTab = useState('library'),
     tab = stTab[0],
@@ -2145,6 +2266,12 @@ function App() {
   var stRdcMI = useState({}),
     rdcMI = stRdcMI[0],
     setRdcMI = stRdcMI[1];
+  var stUsMI = useState({}),
+    usMI = stUsMI[0],
+    setUsMI = stUsMI[1];
+  var stUsOn = useState({}),
+    usOn = stUsOn[0],
+    setUsOn = stUsOn[1];
   var stRdcDay = useState('sun'),
     rdcDay = stRdcDay[0],
     setRdcDay = stRdcDay[1];
@@ -2339,6 +2466,8 @@ function App() {
               setSnaps(JSON.parse(r11.value));
             } catch (e) {}
           }
+          var rUS1 = await window.storage.get('mi2_usmi').catch(function(){return null;}); if(rUS1&&rUS1.value){try{setUsMI(JSON.parse(rUS1.value));}catch(e){}}
+          var rUS2 = await window.storage.get('mi2_uson').catch(function(){return null;}); if(rUS2&&rUS2.value){try{setUsOn(JSON.parse(rUS2.value));}catch(e){}}
           var r7 = await window.storage.get('mi_rdcmi').catch(function () {
             return null;
           });
@@ -2387,6 +2516,12 @@ function App() {
   }, [allNotes, loaded]);
   useEffect(function () {
     if (loaded) window.storage.set('mi2_snaps', JSON.stringify(snaps)).catch(function () {});
+  }, [snaps, loaded]);
+  useEffect(function () {
+    if (loaded) window.storage.set('mi2_usmi', JSON.stringify(usMI)).catch(function () {});
+  }, [usMI, loaded]);
+  useEffect(function () {
+    if (loaded) window.storage.set('mi2_uson', JSON.stringify(usOn)).catch(function () {});
   }, [snaps, loaded]);
   useEffect(function () {
     if (loaded) window.storage.set('mi_emails2', JSON.stringify(emailConfig)).catch(function () {});
@@ -3250,6 +3385,141 @@ function App() {
       return false;
     }
   }
+  // ---- US Sports (ESPN) helpers ----
+  function usWeekOn() { return usOn[wc] || {}; }
+  function isUsOn(k) { return !!usWeekOn()[k]; }
+  function toggleUsOn(k) {
+    setUsOn(function (p) {
+      var wk = Object.assign({}, p[wc] || {});
+      wk[k] = !wk[k];
+      var u = Object.assign({}, p); u[wc] = wk; return u;
+    });
+  }
+  function usPct(stKey, creativeId) {
+    return usMI[wc] && usMI[wc][stKey] && usMI[wc][stKey][creativeId] != null ? usMI[wc][stKey][creativeId] : '';
+  }
+  function setUsPct(stKey, creativeId, val) {
+    val = String(val).replace(/[^0-9.]/g, '');
+    setUsMI(function (p) {
+      var wk = Object.assign({}, p[wc] || {});
+      var col = Object.assign({}, wk[stKey] || {});
+      if (val === '') { delete col[creativeId]; } else { col[creativeId] = val; }
+      wk[stKey] = col;
+      var u = Object.assign({}, p); u[wc] = wk; return u;
+      });
+  }
+  // Auto-copy: when a Live bucket value is set and its Ancillary pair is empty, mirror it
+  function setUsPctWithPair(stKey, creativeId, val) {
+    setUsPct(stKey, creativeId, val);
+    var st = US_SHOWTYPES.find(function (x) { return x.k === stKey; });
+    if (st && st.pair) {
+      var pairHasValue = usMI[wc] && usMI[wc][st.pair] && usMI[wc][st.pair][creativeId] != null && usMI[wc][st.pair][creativeId] !== '';
+      if (!pairHasValue) setUsPct(st.pair, creativeId, val);
+    }
+  }
+  function usColTotal(stKey) {
+    var col = usMI[wc] && usMI[wc][stKey] || {};
+    return Object.keys(col).reduce(function (s2, id) { return s2 + (parseFloat(col[id]) || 0); }, 0);
+  }
+  function syncAncFromLive(liveKey) {
+    var st = US_SHOWTYPES.find(function (x) { return x.k === liveKey; });
+    if (!st || !st.pair) return;
+    setUsMI(function (p) {
+      var wk = Object.assign({}, p[wc] || {});
+      wk[st.pair] = Object.assign({}, wk[liveKey] || {});
+      var u = Object.assign({}, p); u[wc] = wk; return u;
+    });
+    zap('\u2713 ' + st.label.replace('Live', 'Ancillary') + ' matched to Live');
+  }
+  function usActiveShowtypes() { return US_SHOWTYPES.filter(function (st) { return isUsOn(st.k); }); }
+  function usCreativesFor(stKey) {
+    // creatives that have an ESPN tick, sorted by sport then key
+    return creatives.filter(function (c) { return c.nets && c.nets.espn; }).sort(function (a, b) {
+      var ai = US_SPORT_ORDER.indexOf(a.cat), bi = US_SPORT_ORDER.indexOf(b.cat);
+      if (ai < 0) ai = 99; if (bi < 0) bi = 99;
+      if (ai !== bi) return ai - bi;
+      return a.keyNumber < b.keyNumber ? -1 : 1;
+    });
+  }
+
+  function exportUsXLSX() {
+    try {
+      var active = usActiveShowtypes();
+      if (!active.length) { zap('\u26A0 Toggle on at least one show type first'); return false; }
+      var XLSX = getXLSX();
+      var hasStyles = XLSX !== XLSX_NPM;
+      var aoa = [], meta = [];
+      function push(arr, m) { aoa.push(arr); meta.push(m || { type: 'blank' }); }
+      // Title spanning
+      push(['ESPN Material Instructions \u2014 WC ' + fmt(wc)], { type: 'title' });
+      push([], {});
+      // Build left blocks (by show type) and right bank (by sport) into the SAME rows
+      // Left occupies cols A-D, gap col E, right bank cols F-H
+      var espnCre = creatives.filter(function (c) { return c.nets && c.nets.espn; });
+      // Right bank grouped by sport
+      var bank = [];
+      US_SPORT_ORDER.forEach(function (sport) {
+        var group = espnCre.filter(function (c) { return c.cat === sport; }).sort(function (a, b) { return a.keyNumber < b.keyNumber ? -1 : 1; });
+        if (!group.length) return;
+        bank.push({ type: 'sporthdr', sport: sport });
+        group.forEach(function (c) { bank.push({ type: 'bankrow', c: c }); });
+        bank.push({ type: 'blank' });
+      });
+      // Left blocks
+      var left = [];
+      active.forEach(function (st) {
+        var col = usMI[wc] && usMI[wc][st.k] || {};
+        var rows = espnCre.filter(function (c) { return col[c.id] != null && col[c.id] !== ''; }).sort(function (a, b) { return (parseFloat(col[b.id]) || 0) - (parseFloat(col[a.id]) || 0); });
+        left.push({ type: 'sthdr', st: st });
+        left.push({ type: 'lhdr' });
+        rows.forEach(function (c) { left.push({ type: 'lrow', c: c, pct: col[c.id] }); });
+        left.push({ type: 'blank' });
+      });
+      var maxLen = Math.max(left.length, bank.length);
+      for (var i = 0; i < maxLen; i++) {
+        var L = left[i], R = bank[i];
+        var row = ['', '', '', '', '', '', '', ''];
+        var m = { left: L ? L.type : null, right: R ? R.type : null, leftSt: L && L.st, rightSport: R && R.sport };
+        if (L) {
+          if (L.type === 'sthdr') row[0] = L.st.label;
+          else if (L.type === 'lhdr') { row[0] = 'KEY'; row[1] = 'DURATION'; row[2] = 'CREATIVE'; row[3] = 'ROTATION'; }
+          else if (L.type === 'lrow') { row[0] = L.c.keyNumber; row[1] = ':' + L.c.dur; row[2] = stripDur(L.c.title); row[3] = L.pct + '%'; }
+        }
+        if (R) {
+          if (R.type === 'sporthdr') row[5] = R.sport;
+          else if (R.type === 'bankrow') { row[5] = R.c.keyNumber; row[6] = ':' + R.c.dur; row[7] = stripDur(R.c.title); }
+        }
+        push(row, m);
+      }
+      var ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws['!cols'] = [{ wch: 16 }, { wch: 10 }, { wch: 34 }, { wch: 10 }, { wch: 3 }, { wch: 16 }, { wch: 10 }, { wch: 34 }];
+      if (hasStyles) {
+        function cell(r, c) { var a = XLSX.utils.encode_cell({ r: r, c: c }); if (!ws[a]) ws[a] = { t: 's', v: '' }; return ws[a]; }
+        function hex(x) { return (x || '').replace('#', ''); }
+        for (var r = 0; r < meta.length; r++) {
+          var mm = meta[r];
+          if (mm.type === 'title') { cell(r, 0).s = { font: { bold: true, sz: 14 } }; }
+          if (mm.left === 'sthdr') { var sc = cell(r, 0); sc.s = { font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 12 }, fill: { fgColor: { rgb: hex(mm.leftSt.col) } } }; for (var cc = 1; cc < 4; cc++) cell(r, cc).s = { fill: { fgColor: { rgb: hex(mm.leftSt.col) } } }; }
+          if (mm.left === 'lhdr') { for (var c2 = 0; c2 < 4; c2++) cell(r, c2).s = { font: { bold: true, sz: 10 }, fill: { fgColor: { rgb: 'EEEEEE' } } }; }
+          if (mm.left === 'lrow') { for (var c3 = 0; c3 < 4; c3++) cell(r, c3).s = { font: { sz: 10 }, alignment: { horizontal: c3 === 3 ? 'center' : 'left' } }; }
+          if (mm.right === 'sporthdr') { cell(r, 5).s = { font: { bold: true, sz: 11 } }; }
+          if (mm.right === 'bankrow') { for (var c4 = 5; c4 < 8; c4++) cell(r, c4).s = { font: { sz: 10 } }; }
+        }
+      }
+      var wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'ESPN US Sports');
+      var wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      var blob = new Blob([wbout], { type: 'application/octet-stream' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a'); a.href = url;
+      a.download = 'PointsBet_ESPN_US_Sports_WC' + wc + '.xlsx';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 150);
+      zap('\u2713 ESPN US Sports MI exported');
+      return true;
+    } catch (e) { zap('\u26A0 Export failed'); return false; }
+  }
+
   function exportGridXLSX(net) {
     try {
       var rows = outRows(net);
@@ -3610,6 +3880,8 @@ function App() {
       notes: allNotes,
       emails: emailConfig,
       rdcMI: rdcMI,
+      usMI: usMI,
+      usOn: usOn,
       sentMap: sentMap,
       dueOv: dueOv,
       snaps: snaps,
@@ -3680,6 +3952,8 @@ function App() {
     if (d.notes) setAllNotes(wrapWeek(d.notes));
     if (d.snaps) setSnaps(d.snaps);
     if (d.rdcMI) setRdcMI(d.rdcMI);
+    if (d.usMI) setUsMI(d.usMI);
+    if (d.usOn) setUsOn(d.usOn);
     if (d.sentMap) setSentMap(d.sentMap);
     if (d.dueOv) setDueOv(d.dueOv);
     if (d.emails) setEmailConfig(Object.assign({}, DEFAULT_EMAILS, d.emails));
@@ -3796,7 +4070,7 @@ function App() {
     return function () {
       if (syncRef.current.mainTimer) clearTimeout(syncRef.current.mainTimer);
     };
-  }, [allRots, allNotes, rdcMI, sentMap, dueOv, emailConfig, snaps, loaded]);
+  }, [allRots, allNotes, rdcMI, usMI, usOn, sentMap, dueOv, emailConfig, snaps, loaded]);
   // Debounced push — creatives (separate channel so agency key-adds can't collide with rotation edits)
   useEffect(function () {
     if (!loaded || !syncRef.current.ready) return;
@@ -4076,7 +4350,7 @@ function App() {
       padding: '8px 10px',
       boxShadow: '0 1px 4px rgba(17,24,39,.07)'
     }
-  }, [['library', '🎬 Creative Library'], ['planner', '📋 Weekly Planner'], ['rdcmi', '📡 RDC MI'], ['outputs', '📤 Network Outputs'], ['send', '🚦 Send Centre'], ['email', '✉ Email Prep']].map(function (item) {
+  }, [['library', '🎬 Creative Library'], ['planner', '📋 Weekly Planner'], ['rdcmi', '📡 RDC MI'], ['ussports', '🏈 US Sports'], ['outputs', '📤 Network Outputs'], ['send', '🚦 Send Centre'], ['email', '✉ Email Prep']].map(function (item) {
     return /*#__PURE__*/React.createElement("button", {
       key: item[0],
       onClick: function () {
@@ -4140,7 +4414,14 @@ function App() {
     style: {
       display: 'none'
     }
-  })))), tab === 'send' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  })))), tab === 'ussports' && /*#__PURE__*/React.createElement(USSports, {
+    wc: wc, setWc: setWC, fmt: fmt, creatives: creatives,
+    US_SHOWTYPES: US_SHOWTYPES, US_SPORT_ORDER: US_SPORT_ORDER,
+    isUsOn: isUsOn, toggleUsOn: toggleUsOn, usActiveShowtypes: usActiveShowtypes,
+    usPct: usPct, setUsPctWithPair: setUsPctWithPair, usColTotal: usColTotal,
+    syncAncFromLive: syncAncFromLive, usCreativesFor: usCreativesFor, exportUsXLSX: exportUsXLSX,
+    CAT_COL: (typeof CAT_COL !== 'undefined' ? CAT_COL : {}), stripDur: stripDur
+  }), tab === 'send' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
