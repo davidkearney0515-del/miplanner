@@ -53,7 +53,7 @@ function currentWeekSunday() {
   return localISO(d);
 }
 const SV = "5";
-const BUILD = "6 Aug 2026";
+const BUILD = "11 Aug 2026";
 const fmt = s => s ? s.split('-').reverse().join('/') : '—';
 const fmtShort = s => s ? s.split('-').reverse().join('/').slice(0, 5) : '';
 const CATS = ["AFL", "NRL", "NBA", "MLB", "Racing", "Foxcatcher/StatMate", "World Cup", "Other"];
@@ -2229,6 +2229,25 @@ function USSports(props) {
   );
 }
 
+function PlatformTabHeader(props) {
+  var tab = props.tab, planNet = props.planNet, setPlanNet = props.setPlanNet;
+  var h = React.createElement;
+  if (tab === 'foxfooty') {
+    return h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, padding: '10px 14px', backgroundColor: '#f9fafb', borderRadius: 8, border: '1px solid #e5e7eb' } },
+      h('span', { style: { fontSize: 13, fontWeight: 700, color: '#111827' } }, '🏈 Fox Footy'),
+      h('span', { style: { fontSize: 11, color: '#9ca3af' } }, 'National · TV rotation'));
+  }
+  // radio: station sub-selector
+  var stations = [['nine', 'Nine Radio'], ['sen', 'SEN Radio'], ['triplem', 'Triple M']];
+  return h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, padding: '10px 14px', backgroundColor: '#f9fafb', borderRadius: 8, border: '1px solid #e5e7eb', flexWrap: 'wrap' } },
+    h('span', { style: { fontSize: 13, fontWeight: 700, color: '#111827', marginRight: 4 } }, '📻 Radio'),
+    stations.map(function (st) {
+      var sel = planNet === st[0];
+      return h('button', { key: st[0], onClick: function () { setPlanNet(st[0]); },
+        style: { padding: '5px 14px', border: 'none', borderRadius: 20, cursor: 'pointer', fontSize: 12, fontWeight: sel ? 700 : 500, backgroundColor: sel ? '#111827' : '#fff', color: sel ? '#fff' : '#6b7280', boxShadow: sel ? 'none' : '0 0 0 1px #e5e7eb' } }, st[1]);
+    }));
+}
+
 function App() {
   var stTab = useState('library'),
     tab = stTab[0],
@@ -2254,6 +2273,10 @@ function App() {
   var stPN = useState('fox'),
     planNet = stPN[0],
     setPlanNet = stPN[1];
+  useEffect(function () {
+    if (tab === 'foxfooty') { if (platform !== 'tv') setPlatform('tv'); if (planNet !== 'fox') setPlanNet('fox'); }
+    else if (tab === 'radio') { if (platform !== 'radio') setPlatform('radio'); if (['nine', 'sen', 'triplem'].indexOf(planNet) < 0) setPlanNet('nine'); }
+  }, [tab]);
   var stON = useState('fox'),
     outNet = stON[0],
     setOutNet = stON[1];
@@ -4350,7 +4373,7 @@ function App() {
       padding: '8px 10px',
       boxShadow: '0 1px 4px rgba(17,24,39,.07)'
     }
-  }, [['library', '🎬 Creative Library'], ['planner', '📋 Weekly Planner'], ['rdcmi', '📡 RDC MI'], ['ussports', '🏈 US Sports'], ['outputs', '📤 Network Outputs'], ['send', '🚦 Send Centre'], ['email', '✉ Email Prep']].map(function (item) {
+  }, [['library', '🎬 Creative Library'], ['foxfooty', '🏈 Fox Footy'], ['ussports', '🏈 ESPN'], ['rdcmi', '📡 RDC'], ['radio', '📻 Radio']].map(function (item) {
     return /*#__PURE__*/React.createElement("button", {
       key: item[0],
       onClick: function () {
@@ -4748,10 +4771,8 @@ function App() {
       color: '#9ca3af',
       marginTop: 10
     }
-  }, "Sent status is tracked per week — change the WC date above to see another week's run sheet. Due dates default to the usual lead times (RDC Sun–Tue earlier per Racing.com's split delivery); adjust \"days before WC\" if a network changes its deadline.")), tab === 'planner' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(PlatformBar, {
-    platform: platform,
-    setPlatform: setPlatform,
-    platformNets: platformNets
+  }, "Sent status is tracked per week — change the WC date above to see another week's run sheet. Due dates default to the usual lead times (RDC Sun–Tue earlier per Racing.com's split delivery); adjust \"days before WC\" if a network changes its deadline.")), (tab === 'foxfooty' || tab === 'radio') && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(PlatformTabHeader, {
+    tab: tab, planNet: planNet, setPlanNet: setPlanNet
   }), !loaded ? /*#__PURE__*/React.createElement("div", {
     style: {
       padding: 32,
@@ -4783,22 +4804,28 @@ function App() {
       padding: '4px 8px',
       fontSize: 13
     }
-  }), /*#__PURE__*/React.createElement(NetToggle, {
-    val: planNet,
-    onChange: function (k) {
-      setPlanNet(k);
-      setActiveNote(null);
-    },
-    nets: platformNets
   }), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 11,
       color: '#6b7280'
     }
   }, fmt(wc), " – ", fmt(wcEnd)), /*#__PURE__*/React.createElement("button", {
-    onClick: clearAllocations,
+    onClick: function () { (planNet === 'fox' || planNet === 'espn') ? exportGridXLSX(planNet) : exportCSV(planNet); },
     style: {
       marginLeft: 'auto',
+      padding: '5px 14px',
+      border: 'none',
+      borderRadius: 6,
+      cursor: 'pointer',
+      fontSize: 12,
+      fontWeight: 700,
+      backgroundColor: '#1d6f42',
+      color: '#fff'
+    }
+  }, (planNet === 'fox' || planNet === 'espn') ? "\u2193 Export Excel" : "\u2193 Export CSV"), /*#__PURE__*/React.createElement("button", {
+    onClick: clearAllocations,
+    style: {
+      marginLeft: 8,
       padding: '5px 14px',
       border: '1px solid ' + (confirmClear ? '#dc2626' : '#fca5a5'),
       borderRadius: 6,
