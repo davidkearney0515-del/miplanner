@@ -53,7 +53,7 @@ function currentWeekSunday() {
   return localISO(d);
 }
 const SV = "5";
-const BUILD = "11 Aug 2026";
+const BUILD = "12 Aug 2026";
 const fmt = s => s ? s.split('-').reverse().join('/') : '—';
 const fmtShort = s => s ? s.split('-').reverse().join('/').slice(0, 5) : '';
 const CATS = ["AFL", "NRL", "NFL", "NBA", "MLB", "Racing", "Foxcatcher/StatMate", "World Cup", "Other"];
@@ -2132,7 +2132,11 @@ function USSports(props) {
   // Default the editing column to the first active show type
   var editKey = activeCol && active.some(function (s) { return s.k === activeCol; }) ? activeCol : (active[0] ? active[0].k : null);
   var editSt = US_SHOWTYPES.find(function (s) { return s.k === editKey; });
-  var espnCre = creatives.filter(function (c) { return c.nets && c.nets.espn; });
+  var st_showExp = useState(false), showExpEsp = st_showExp[0], setShowExpEsp = st_showExp[1];
+  function espExpired(c) { return !!(c.end && c.end < localISO(new Date())); }
+  var espnCreAll = creatives.filter(function (c) { return c.nets && c.nets.espn; });
+  var espnExpiredCount = espnCreAll.filter(espExpired).length;
+  var espnCre = espnCreAll.filter(function (c) { return showExpEsp || !espExpired(c); });
 
   // Toggle strip
   var toggleStrip = h('div', { style: { background: '#fff', borderRadius: 12, padding: '12px 16px', marginBottom: 14, boxShadow: '0 1px 4px rgba(17,24,39,.07)' } },
@@ -2221,6 +2225,9 @@ function USSports(props) {
       h('span', { style: { fontSize: 13, fontWeight: 600 } }, 'Week commencing:'),
       h('input', { type: 'date', value: wc, onChange: function (e) { setWc(e.target.value); }, style: { border: '1px solid #d1d5db', borderRadius: 8, padding: '6px 10px', fontSize: 13 } }),
       h('span', { style: { fontSize: 11, color: '#9ca3af' } }, 'ESPN only \u2014 show-type rotations. A creative can sit in every active show type at its own %.'),
+      espnExpiredCount > 0 ? h('label', { style: { fontSize: 11, color: '#6b7280', display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer' } },
+        h('input', { type: 'checkbox', checked: showExpEsp, onChange: function (e) { setShowExpEsp(e.target.checked); } }),
+        'Show expired (' + espnExpiredCount + ')') : null,
       active.length ? h('button', { onClick: exportUsXLSX, style: { marginLeft: 'auto', background: '#1d6f42', color: '#fff', border: 'none', borderRadius: 9, padding: '8px 16px', fontSize: 13, fontWeight: 800, cursor: 'pointer' } }, '\u2193 Export ESPN Excel') : null
     ),
     toggleStrip,
@@ -3479,7 +3486,7 @@ function App() {
       push([], {});
       // Build left blocks (by show type) and right bank (by sport) into the SAME rows
       // Left occupies cols A-D, gap col E, right bank cols F-H
-      var espnCre = creatives.filter(function (c) { return c.nets && c.nets.espn; });
+      var espnCre = creatives.filter(function (c) { return c.nets && c.nets.espn && (showExpEsp || !espExpired(c)); });
       // Right bank grouped by sport
       var bank = [];
       US_SPORT_ORDER.forEach(function (sport) {
