@@ -3480,7 +3480,7 @@ function App() {
       var XLSX = getXLSX();
       var hasStyles = XLSX !== XLSX_NPM;
       var aoa = [], meta = [];
-      function push(arr, m) { aoa.push(arr); meta.push(m || { type: 'blank' }); }
+      var push = function (arr, m) { var rr = arr.slice(); while (rr.length < 8) rr.push(''); aoa.push(rr); meta.push(m || { type: 'blank' }); };
       // Title spanning
       push(['ESPN Material Instructions \u2014 WC ' + fmt(wc)], { type: 'title' });
       push([], {});
@@ -3524,9 +3524,9 @@ function App() {
       }
       var ws = XLSX.utils.aoa_to_sheet(aoa);
       ws['!cols'] = [{ wch: 16 }, { wch: 10 }, { wch: 34 }, { wch: 10 }, { wch: 3 }, { wch: 16 }, { wch: 10 }, { wch: 34 }];
+      var cell = function (r, c) { var a = XLSX.utils.encode_cell({ r: r, c: c }); if (!ws[a]) ws[a] = { t: 's', v: '' }; return ws[a]; };
+      var hex = function (x) { return (x || '').replace('#', ''); };
       if (hasStyles) {
-        function cell(r, c) { var a = XLSX.utils.encode_cell({ r: r, c: c }); if (!ws[a]) ws[a] = { t: 's', v: '' }; return ws[a]; }
-        function hex(x) { return (x || '').replace('#', ''); }
         for (var r = 0; r < meta.length; r++) {
           var mm = meta[r];
           if (mm.type === 'title') { cell(r, 0).s = { font: { bold: true, sz: 14 } }; }
@@ -3548,7 +3548,7 @@ function App() {
       setTimeout(function () { URL.revokeObjectURL(url); }, 150);
       zap('\u2713 ESPN US Sports MI exported');
       return true;
-    } catch (e) { zap('\u26A0 Export failed'); return false; }
+    } catch (e) { zap('\u26A0 Export failed: ' + (e && e.message ? e.message : e)); return false; }
   }
 
   function exportGridXLSX(net) {
@@ -3558,7 +3558,7 @@ function App() {
       var XLSX = getXLSX();
       var hasStyles = XLSX !== XLSX_NPM;
       var aoa = [], meta = [];
-      function push(arr, m) { aoa.push(arr); meta.push(m || { type: 'blank' }); }
+      var push = function (arr, m) { var rr = arr.slice(); while (rr.length < 8) rr.push(''); aoa.push(rr); meta.push(m || { type: 'blank' }); };
       push([lbl + ' \u2014 Material Instructions \u2014 WC ' + fmt(wc)], { type: 'title' });
       push([], { type: 'blank' });
       var any = false;
@@ -4781,7 +4781,14 @@ function App() {
     }
   }, "Sent status is tracked per week — change the WC date above to see another week's run sheet. Due dates default to the usual lead times (RDC Sun–Tue earlier per Racing.com's split delivery); adjust \"days before WC\" if a network changes its deadline.")), (tab === 'foxfooty' || tab === 'radio') && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(PlatformTabHeader, {
     tab: tab, planNet: planNet, setPlanNet: setPlanNet
-  }), !loaded ? /*#__PURE__*/React.createElement("div", {
+  }), planNet === 'fox' ? /*#__PURE__*/React.createElement("div", {
+    style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, padding: '10px 14px', backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, flexWrap: 'wrap' }
+  }, /*#__PURE__*/React.createElement("div", { style: { flex: '1 1 280px' } },
+    /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: '#1d4ed8', marginBottom: 2 } }, "\uD83D\uDCFA Fox Footy Spot-by-Spot Mapping"),
+    /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: '#1e40af' } }, "Upload Fox's clear .xlsx \u2014 the tool applies your Fox rotation % for this week to assign creatives spot-by-spot (matched by duration) and downloads a completed file.")),
+    /*#__PURE__*/React.createElement("label", { style: { display: 'inline-block', backgroundColor: '#1d4ed8', color: '#fff', padding: '8px 14px', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 700 } }, "\uD83D\uDCC2 Upload & Generate",
+      /*#__PURE__*/React.createElement("input", { type: "file", accept: ".xlsx,.xls", onChange: handleFoxUpload, style: { display: 'none' } }))
+  ) : null, !loaded ? /*#__PURE__*/React.createElement("div", {
     style: {
       padding: 32,
       textAlign: 'center',
