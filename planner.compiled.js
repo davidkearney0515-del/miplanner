@@ -53,7 +53,7 @@ function currentWeekSunday() {
   return localISO(d);
 }
 const SV = "5";
-const BUILD = "12 Aug 2026";
+const BUILD = "20 Aug 2026";
 const fmt = s => s ? s.split('-').reverse().join('/') : '—';
 const fmtShort = s => s ? s.split('-').reverse().join('/').slice(0, 5) : '';
 const CATS = ["AFL", "NRL", "NFL", "NBA", "MLB", "Racing", "Foxcatcher/StatMate", "World Cup", "Other"];
@@ -3486,7 +3486,7 @@ function App() {
       push([], {});
       // Build left blocks (by show type) and right bank (by sport) into the SAME rows
       // Left occupies cols A-D, gap col E, right bank cols F-H
-      var espnCre = creatives.filter(function (c) { return c.nets && c.nets.espn && (showExpEsp || !espExpired(c)); });
+      var espnCre = creatives.filter(function (c) { return c.nets && c.nets.espn && !isExpired(c); });
       // Right bank grouped by sport
       var bank = [];
       US_SPORT_ORDER.forEach(function (sport) {
