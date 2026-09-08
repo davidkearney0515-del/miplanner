@@ -53,7 +53,7 @@ function currentWeekSunday() {
   return localISO(d);
 }
 const SV = "5";
-const BUILD = "20 Aug 2026";
+const BUILD = "8 Sep 2026";
 const fmt = s => s ? s.split('-').reverse().join('/') : '—';
 const fmtShort = s => s ? s.split('-').reverse().join('/').slice(0, 5) : '';
 const CATS = ["AFL", "NRL", "NFL", "NBA", "MLB", "Racing", "Foxcatcher/StatMate", "World Cup", "Other"];
@@ -125,6 +125,7 @@ const BLANK = {
   cat: 'AFL',
   air: '',
   end: '',
+  note: '',
   nets: {
     ...BLANK_NETS
   }
@@ -387,6 +388,33 @@ function CatBadge(props) {
       border: '1px solid ' + CAT_COL[props.cat] + '44'
     }
   }, props.cat);
+}
+function NoteBadge(props) {
+  var note = props.note;
+  if (!note) return null;
+  var short = note.length > 42 ? note.slice(0, 42) + '\u2026' : note;
+  return /*#__PURE__*/React.createElement("span", {
+    title: note,
+    style: {
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 3,
+      fontSize: 10,
+      fontWeight: 600,
+      color: '#92400e',
+      backgroundColor: '#fef3c7',
+      border: '1px solid #fde68a',
+      borderRadius: 8,
+      padding: '1px 6px',
+      marginLeft: 6,
+      maxWidth: 220,
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+      verticalAlign: 'middle',
+      cursor: 'default'
+    }
+  }, "\uD83D\uDCCC ", short);
 }
 const DEFAULT_EMAILS = {
   fox: {
@@ -1326,7 +1354,9 @@ function CreativeRows(props) {
       whiteSpace: 'nowrap'
     },
     title: c.title
-  }, c.title), /*#__PURE__*/React.createElement("td", {
+  }, c.title, /*#__PURE__*/React.createElement(NoteBadge, {
+    note: c.note
+  })), /*#__PURE__*/React.createElement("td", {
     style: {
       ...TD,
       textAlign: 'center',
@@ -1833,6 +1863,8 @@ function RdcDaySection(props) {
         padding: '3px 6px',
         fontSize: 11
       }
+    }), c && /*#__PURE__*/React.createElement(NoteBadge, {
+      note: c.note
     })), /*#__PURE__*/React.createElement("td", {
       style: {
         ...TD,
@@ -2188,7 +2220,7 @@ function USSports(props) {
       grp.forEach(function (c) {
         body.push(h('tr', { key: c.id, style: { borderTop: '1px solid #f1f2f5' } },
           h('td', { style: { padding: '5px 10px', fontFamily: 'ui-monospace,Menlo,monospace', fontWeight: 700, fontSize: 11 } }, c.keyNumber),
-          h('td', { style: { padding: '5px 10px', fontSize: 12 } }, stripDur(c.title)),
+          h('td', { style: { padding: '5px 10px', fontSize: 12 } }, stripDur(c.title), h(NoteBadge, { note: c.note })),
           h('td', { style: { padding: '5px 10px', textAlign: 'center', fontSize: 12, color: '#6b7280' } }, ':' + c.dur),
           h('td', { style: { padding: '5px 10px', textAlign: 'center' } },
             h('input', {
@@ -4176,6 +4208,7 @@ function App() {
                 cat: CATS.indexOf(item.cat) >= 0 ? item.cat : next[idx].cat,
                 air: item.air != null ? item.air : next[idx].air,
                 end: item.end != null ? item.end : next[idx].end,
+                note: item.note != null ? item.note : next[idx].note,
                 nets: item.nets ? nets : next[idx].nets
               });
               updated++;
@@ -4188,6 +4221,7 @@ function App() {
                 cat: CATS.indexOf(item.cat) >= 0 ? item.cat : 'Other',
                 air: item.air || '',
                 end: item.end || '',
+                note: item.note || '',
                 mat: item.mat || 'ok',
                 nets: nets
               });
@@ -5340,7 +5374,18 @@ function App() {
         ...TH,
         textAlign: 'center'
       }
-    }, "Material"), allPlatNets.map(function (n) {
+    }, "Material"), /*#__PURE__*/React.createElement("th", {
+      style: {
+        ...TH,
+        width: 180
+      }
+    }, "Notes", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontWeight: 400,
+        color: '#9ca3af',
+        fontSize: 9
+      }
+    }, "shown on all tabs")), allPlatNets.map(function (n) {
       return /*#__PURE__*/React.createElement("th", {
         key: n.k,
         style: {
@@ -5473,7 +5518,24 @@ function App() {
         value: "feeding"
       }, "Feeding thru"), /*#__PURE__*/React.createElement("option", {
         value: "missing"
-      }, "Not arrived"))), allPlatNets.map(function (n) {
+      }, "Not arrived"))), /*#__PURE__*/React.createElement("td", {
+        style: {
+          ...TD,
+          padding: '4px 6px'
+        }
+      }, /*#__PURE__*/React.createElement("input", {
+        type: "text",
+        value: c.note || '',
+        placeholder: "e.g. Don't use \u2014 talent no longer approved",
+        onChange: function (e) {
+          updateCreativeField(c.id, 'note', e.target.value);
+        },
+        style: {
+          ...editInp,
+          width: '100%',
+          backgroundColor: c.note ? '#fffbeb' : '#fff'
+        }
+      })), allPlatNets.map(function (n) {
         return /*#__PURE__*/React.createElement("td", {
           key: n.k,
           style: {
