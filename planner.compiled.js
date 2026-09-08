@@ -1820,7 +1820,7 @@ function RdcDaySection(props) {
       return rc.keyNumber === spot.k;
     }) && /*#__PURE__*/React.createElement("option", {
       value: spot.k
-    }, "[Expired] ", spot.k, c ? ' — ' + stripDur(c.title) : ''), rdcCreatives.slice().sort(function (a, b) {
+    }, "[Expired] ", spot.k, c ? ' — ' + stripDur(c.title) : '', c && c.note ? ' \u26A0 ' + c.note : ''), rdcCreatives.slice().sort(function (a, b) {
       var ai = CAT_ORDER.indexOf(a.cat),
         bi = CAT_ORDER.indexOf(b.cat);
       if (ai !== bi) return ai - bi;
@@ -1829,7 +1829,7 @@ function RdcDaySection(props) {
       return /*#__PURE__*/React.createElement("option", {
         key: rc.keyNumber,
         value: rc.keyNumber
-      }, "[", rc.cat, "] ", rc.keyNumber, " — ", stripDur(rc.title));
+      }, "[", rc.cat, "] ", rc.keyNumber, " — ", stripDur(rc.title), rc.note ? ' \u26A0 ' + rc.note : '');
     }))), /*#__PURE__*/React.createElement("td", {
       style: {
         ...TD,
