@@ -53,7 +53,7 @@ function currentWeekSunday() {
   return localISO(d);
 }
 const SV = "5";
-const BUILD = "8 Sep 2026";
+const BUILD = "14 Sep 2026";
 const fmt = s => s ? s.split('-').reverse().join('/') : '—';
 const fmtShort = s => s ? s.split('-').reverse().join('/').slice(0, 5) : '';
 const CATS = ["AFL", "NRL", "NFL", "NBA", "MLB", "Racing", "Foxcatcher/StatMate", "World Cup", "Other"];
@@ -125,7 +125,6 @@ const BLANK = {
   cat: 'AFL',
   air: '',
   end: '',
-  note: '',
   nets: {
     ...BLANK_NETS
   }
@@ -388,33 +387,6 @@ function CatBadge(props) {
       border: '1px solid ' + CAT_COL[props.cat] + '44'
     }
   }, props.cat);
-}
-function NoteBadge(props) {
-  var note = props.note;
-  if (!note) return null;
-  var short = note.length > 42 ? note.slice(0, 42) + '\u2026' : note;
-  return /*#__PURE__*/React.createElement("span", {
-    title: note,
-    style: {
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: 3,
-      fontSize: 10,
-      fontWeight: 600,
-      color: '#92400e',
-      backgroundColor: '#fef3c7',
-      border: '1px solid #fde68a',
-      borderRadius: 8,
-      padding: '1px 6px',
-      marginLeft: 6,
-      maxWidth: 220,
-      overflow: 'hidden',
-      textOverflow: 'ellipsis',
-      whiteSpace: 'nowrap',
-      verticalAlign: 'middle',
-      cursor: 'default'
-    }
-  }, "\uD83D\uDCCC ", short);
 }
 const DEFAULT_EMAILS = {
   fox: {
@@ -1354,9 +1326,7 @@ function CreativeRows(props) {
       whiteSpace: 'nowrap'
     },
     title: c.title
-  }, c.title, /*#__PURE__*/React.createElement(NoteBadge, {
-    note: c.note
-  })), /*#__PURE__*/React.createElement("td", {
+  }, c.title), /*#__PURE__*/React.createElement("td", {
     style: {
       ...TD,
       textAlign: 'center',
@@ -1820,7 +1790,7 @@ function RdcDaySection(props) {
       return rc.keyNumber === spot.k;
     }) && /*#__PURE__*/React.createElement("option", {
       value: spot.k
-    }, "[Expired] ", spot.k, c ? ' — ' + stripDur(c.title) : '', c && c.note ? ' \u26A0 ' + c.note : ''), rdcCreatives.slice().sort(function (a, b) {
+    }, "[Expired] ", spot.k, c ? ' — ' + stripDur(c.title) : ''), rdcCreatives.slice().sort(function (a, b) {
       var ai = CAT_ORDER.indexOf(a.cat),
         bi = CAT_ORDER.indexOf(b.cat);
       if (ai !== bi) return ai - bi;
@@ -1829,7 +1799,7 @@ function RdcDaySection(props) {
       return /*#__PURE__*/React.createElement("option", {
         key: rc.keyNumber,
         value: rc.keyNumber
-      }, "[", rc.cat, "] ", rc.keyNumber, " — ", stripDur(rc.title), rc.note ? ' \u26A0 ' + rc.note : '');
+      }, "[", rc.cat, "] ", rc.keyNumber, " — ", stripDur(rc.title));
     }))), /*#__PURE__*/React.createElement("td", {
       style: {
         ...TD,
@@ -1863,8 +1833,6 @@ function RdcDaySection(props) {
         padding: '3px 6px',
         fontSize: 11
       }
-    }), c && /*#__PURE__*/React.createElement(NoteBadge, {
-      note: c.note
     })), /*#__PURE__*/React.createElement("td", {
       style: {
         ...TD,
@@ -2152,123 +2120,160 @@ function ContactEditor(props) {
   }, "First \"To\" person\u2019s name is used for the email greeting and rotation updates."));
 }
 function USSports(props) {
-  var wc = props.wc, setWc = props.setWc, fmt = props.fmt, creatives = props.creatives;
-  var US_SHOWTYPES = props.US_SHOWTYPES, US_SPORT_ORDER = props.US_SPORT_ORDER;
-  var isUsOn = props.isUsOn, toggleUsOn = props.toggleUsOn, usActiveShowtypes = props.usActiveShowtypes;
-  var usPct = props.usPct, setUsPctWithPair = props.setUsPctWithPair, usColTotal = props.usColTotal;
-  var syncAncFromLive = props.syncAncFromLive, usCreativesFor = props.usCreativesFor, exportUsXLSX = props.exportUsXLSX;
-  var CAT_COL = props.CAT_COL, stripDur = props.stripDur;
-  var h = React.createElement;
-  var st1 = useState(null), activeCol = st1[0], setActiveCol = st1[1];
-  var active = usActiveShowtypes();
-  // Default the editing column to the first active show type
-  var editKey = activeCol && active.some(function (s) { return s.k === activeCol; }) ? activeCol : (active[0] ? active[0].k : null);
-  var editSt = US_SHOWTYPES.find(function (s) { return s.k === editKey; });
-  var st_showExp = useState(false), showExpEsp = st_showExp[0], setShowExpEsp = st_showExp[1];
-  function espExpired(c) { return !!(c.end && c.end < localISO(new Date())); }
-  var espnCreAll = creatives.filter(function (c) { return c.nets && c.nets.espn; });
-  var espnExpiredCount = espnCreAll.filter(espExpired).length;
-  var espnCre = espnCreAll.filter(function (c) { return showExpEsp || !espExpired(c); });
+  var p = props, h = React.createElement;
+  var wc = p.wc, setWc = p.setWc, fmt = p.fmt, creatives = p.creatives, isExpired = p.isExpired;
+  var US_SHOWTYPES = p.US_SHOWTYPES, US_SPORT_ORDER = p.US_SPORT_ORDER, CAT_COL = p.CAT_COL, stripDur = p.stripDur;
+  var DAYS = p.DAYS, DAY_L = p.DAY_L, getWeekDates = p.getWeekDates;
+  var isUsOn = p.isUsOn, toggleUsOn = p.toggleUsOn, usActiveShowtypes = p.usActiveShowtypes;
+  var daySplit = p.daySplit, setDaySplit = p.setDaySplit, daySections = p.daySections;
+  var usPct = p.usPct, setUsPctWithPair = p.setUsPctWithPair, usPoolTotal = p.usPoolTotal;
+  var usCopyBucket = p.usCopyBucket, usCopyDay = p.usCopyDay, usCopySection = p.usCopySection;
+  var usCreativesFor = p.usCreativesFor, exportUsXLSX = p.exportUsXLSX;
 
-  // Toggle strip
+  var stDay = React.useState('sun'); var day = stDay[0], setDay = stDay[1];
+  var wd = getWeekDates(wc);
+  var active = usActiveShowtypes();
+  var espnCre = usCreativesFor();
+  var secs = daySections(day);
+  var split = daySplit(day);
+
+  // ---- header row: week + export ----
+  var header = h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, flexWrap: 'wrap' } },
+    h('span', { style: { fontSize: 13, fontWeight: 600 } }, 'Week commencing:'),
+    h('input', { type: 'date', value: wc, onChange: function (e) { setWc(e.target.value); }, style: { border: '1px solid #d1d5db', borderRadius: 8, padding: '6px 10px', fontSize: 13 } }),
+    h('span', { style: { fontSize: 11, color: '#9ca3af' } }, 'ESPN \u00b7 per-day, per-show-type. 15s and 30s each total 100% separately.'),
+    active.length ? h('button', { onClick: exportUsXLSX, style: { marginLeft: 'auto', background: '#1d6f42', color: '#fff', border: 'none', borderRadius: 9, padding: '8px 16px', fontSize: 13, fontWeight: 800, cursor: 'pointer' } }, '\u2193 Export ESPN Excel') : null
+  );
+
+  // ---- show-type toggle strip ----
   var toggleStrip = h('div', { style: { background: '#fff', borderRadius: 12, padding: '12px 16px', marginBottom: 14, boxShadow: '0 1px 4px rgba(17,24,39,.07)' } },
     h('div', { style: { fontSize: 11, fontWeight: 800, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 10 } }, 'On-air this week \u2014 toggle the show types running'),
     h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
       US_SHOWTYPES.map(function (s) {
         var on = isUsOn(s.k);
-        return h('button', {
-          key: s.k, onClick: function () { toggleUsOn(s.k); },
-          style: {
-            border: '2px solid ' + s.col, borderRadius: 20, padding: '6px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer',
-            background: on ? s.col : '#fff', color: on ? '#fff' : s.col
-          }
-        }, (on ? '\u25CF ' : '\u25CB ') + s.label);
-      })
-    )
-  );
+        return h('button', { key: s.k, onClick: function () { toggleUsOn(s.k); },
+          style: { border: '2px solid ' + s.col, borderRadius: 20, padding: '6px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer', background: on ? s.col : '#fff', color: on ? '#fff' : s.col } },
+          (on ? '\u25CF ' : '\u25CB ') + s.label);
+      })));
 
-  // Column selector (which show type you're editing)
-  var colSelector = active.length ? h('div', { style: { display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' } },
-    h('span', { style: { fontSize: 12, fontWeight: 600, color: '#6b7280' } }, 'Editing rotation for:'),
-    active.map(function (s) {
-      var sel = s.k === editKey;
-      return h('button', {
-        key: s.k, onClick: function () { setActiveCol(s.k); },
-        style: { border: '1px solid ' + s.col, borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer', background: sel ? s.col : '#fff', color: sel ? '#fff' : s.col }
-      }, s.label);
-    }),
-    editSt && editSt.pair ? h('button', {
-      onClick: function () { syncAncFromLive(editKey); },
-      title: 'Copy this Live rotation into its Ancillary pair',
-      style: { marginLeft: 'auto', border: '1px solid #d1d5db', borderRadius: 8, padding: '6px 12px', fontSize: 12, cursor: 'pointer', background: '#fff', color: '#374151' }
-    }, '\u21BB Match Ancillary to Live') : null
-  ) : null;
+  // ---- day tabs ----
+  var dayTabs = h('div', { style: { display: 'flex', borderBottom: '2px solid #e5e7eb', marginBottom: 14, flexWrap: 'wrap' } },
+    DAYS.map(function (d, i) {
+      var sel = day === d;
+      return h('button', { key: d, onClick: function () { setDay(d); },
+        style: { padding: '6px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, fontWeight: sel ? 700 : 400, color: sel ? '#EE1A42' : '#374151', borderBottom: sel ? '2px solid #EE1A42' : '2px solid transparent', marginBottom: -2, lineHeight: 1.3 } },
+        DAY_L[i], h('br'), h('span', { style: { fontSize: 10, fontWeight: 400, color: '#6b7280' } }, (fmt(wd[i] || '') || '').slice(0, 5)));
+    }));
 
-  // Editing grid for the selected show type
-  var grid = null;
-  if (editKey) {
-    var total = usColTotal(editKey);
-    var totColour = total === 100 ? '#059669' : (total > 100 ? '#dc2626' : '#b45309');
-    var rowsBySport = {};
-    espnCre.forEach(function (c) { (rowsBySport[c.cat] = rowsBySport[c.cat] || []).push(c); });
-    var body = [];
-    US_SPORT_ORDER.forEach(function (sport) {
-      var grp = (rowsBySport[sport] || []).sort(function (a, b) { return a.keyNumber < b.keyNumber ? -1 : 1; });
-      if (!grp.length) return;
-      var col = CAT_COL[sport] || '#6b7280';
-      body.push(h('tr', { key: 'sp-' + sport }, h('td', { colSpan: 4, style: { background: col + '18', color: col, fontWeight: 800, fontSize: 11, padding: '5px 10px', textTransform: 'uppercase', letterSpacing: '.04em' } }, sport)));
-      grp.forEach(function (c) {
-        body.push(h('tr', { key: c.id, style: { borderTop: '1px solid #f1f2f5' } },
-          h('td', { style: { padding: '5px 10px', fontFamily: 'ui-monospace,Menlo,monospace', fontWeight: 700, fontSize: 11 } }, c.keyNumber),
-          h('td', { style: { padding: '5px 10px', fontSize: 12 } }, stripDur(c.title), h(NoteBadge, { note: c.note })),
-          h('td', { style: { padding: '5px 10px', textAlign: 'center', fontSize: 12, color: '#6b7280' } }, ':' + c.dur),
-          h('td', { style: { padding: '5px 10px', textAlign: 'center' } },
-            h('input', {
-              value: usPct(editKey, c.id), onChange: function (e) { setUsPctWithPair(editKey, c.id, e.target.value); },
-              placeholder: '%', style: { width: 56, border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 6px', fontSize: 12, textAlign: 'center' }
-            })
-          )
-        ));
-      });
-    });
-    grid = h('div', { style: { background: '#fff', borderRadius: 12, boxShadow: '0 1px 4px rgba(17,24,39,.07)', overflow: 'hidden' } },
-      h('div', { style: { padding: '10px 16px', background: editSt.col, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
-        h('span', { style: { fontWeight: 800, fontSize: 14 } }, editSt.label + ' \u2014 rotation'),
-        h('span', { style: { fontSize: 12, fontWeight: 700, background: 'rgba(255,255,255,.2)', borderRadius: 12, padding: '2px 10px' } }, 'Total: ' + total + '%')
-      ),
-      h('div', { style: { fontSize: 11, color: totColour, padding: '6px 16px', background: '#fafafa' } },
-        total === 100 ? '\u2713 Adds to 100%' : (total > 100 ? '\u26A0 Over 100% \u2014 trim ' + (total - 100) + '%' : 'Add ' + (100 - total) + '% more to reach 100%')),
-      h('table', { style: { width: '100%', borderCollapse: 'collapse' } },
-        h('thead', null, h('tr', null,
-          h('th', { style: { textAlign: 'left', padding: '7px 10px', fontSize: 11, color: '#374151', background: '#f9fafb' } }, 'Key'),
-          h('th', { style: { textAlign: 'left', padding: '7px 10px', fontSize: 11, color: '#374151', background: '#f9fafb' } }, 'Creative'),
-          h('th', { style: { textAlign: 'center', padding: '7px 10px', fontSize: 11, color: '#374151', background: '#f9fafb' } }, 'Dur'),
-          h('th', { style: { textAlign: 'center', padding: '7px 10px', fontSize: 11, color: '#374151', background: '#f9fafb', width: 90 } }, 'Rotation'))),
-        h('tbody', null, body)
-      )
-    );
+  // ---- split control for the current day ----
+  var splitCtl = h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, flexWrap: 'wrap', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, padding: '8px 12px' } },
+    h('label', { style: { fontSize: 12, color: '#374151', display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontWeight: 600 } },
+      h('input', { type: 'checkbox', checked: split.splits > 1, onChange: function (e) { setDaySplit(day, e.target.checked ? { splits: 2, times: ['10:30'] } : null); } }),
+      'Split ' + DAY_L[DAYS.indexOf(day)] + ' into time sections'),
+    split.splits > 1 ? h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 6 } },
+      h('span', { style: { fontSize: 12, color: '#6b7280' } }, 'Sections:'),
+      h('select', { value: split.splits, onChange: function (e) {
+          var n = parseInt(e.target.value); var times = (split.times || []).slice(0, n - 1);
+          while (times.length < n - 1) times.push('');
+          setDaySplit(day, { splits: n, times: times });
+        }, style: { border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 8px', fontSize: 12 } },
+        [2, 3, 4].map(function (n) { return h('option', { key: n, value: n }, n); }))
+    ) : null,
+    split.splits > 1 ? (split.times || []).map(function (t, i) {
+      return h('span', { key: i, style: { display: 'inline-flex', alignItems: 'center', gap: 4 } },
+        h('span', { style: { fontSize: 11, color: '#9ca3af' } }, 'break ' + (i + 1) + ':'),
+        h('input', { type: 'time', value: t, onChange: function (e) {
+            var times = (split.times || []).slice(); times[i] = e.target.value;
+            setDaySplit(day, { splits: split.splits, times: times });
+          }, style: { border: '1px solid #d1d5db', borderRadius: 6, padding: '3px 6px', fontSize: 12 } }));
+    }) : null,
+    h('span', { style: { marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6 } },
+      h('span', { style: { fontSize: 11, color: '#9ca3af' } }, 'Copy this day to:'),
+      h('select', { value: '', onChange: function (e) { if (e.target.value) { usCopyDay(day, e.target.value); e.target.value = ''; } }, style: { border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 6px', fontSize: 11 } },
+        [h('option', { key: '', value: '' }, '\u2014 another day \u2014')].concat(DAYS.map(function (d2, i) { return d2 === day ? null : h('option', { key: d2, value: d2 }, DAY_L[i]); })))));
+
+  // ---- the grid: for each section, each active show type, 15s + 30s pools ----
+  var body = null;
+  if (!active.length) {
+    body = h('div', { style: { background: '#fff', borderRadius: 12, padding: '40px 20px', textAlign: 'center', color: '#6b7280', fontSize: 14, boxShadow: '0 1px 4px rgba(17,24,39,.07)' } },
+      'No show types are on-air. Toggle some on above (e.g. NFL \u2014 Live) to start allocating.');
+  } else {
+    body = h('div', null, secs.map(function (sec) {
+      return h('div', { key: sec.id, style: { marginBottom: 18 } },
+        secs.length > 1 ? h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 } },
+          h('span', { style: { fontSize: 13, fontWeight: 800, color: '#111827', background: '#eef0f6', borderRadius: 6, padding: '4px 12px' } }, '\u23F1 ' + sec.label),
+          secs.length > 1 ? h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 5 } },
+            h('span', { style: { fontSize: 11, color: '#9ca3af' } }, 'copy this timeslot to:'),
+            h('select', { value: '', onChange: function (e) { if (e.target.value) { usCopySection(day, sec.id, e.target.value); e.target.value = ''; } }, style: { border: '1px solid #d1d5db', borderRadius: 6, padding: '3px 6px', fontSize: 11 } },
+              [h('option', { key: '', value: '' }, '\u2014 timeslot \u2014')].concat(secs.map(function (s2) { return s2.id === sec.id ? null : h('option', { key: s2.id, value: s2.id }, s2.label); })))) : null
+        ) : null,
+        active.map(function (st) {
+          return h(USBucket, { key: st.k, st: st, day: day, sec: sec, secs: secs, active: active,
+            espnCre: espnCre, usPct: usPct, setUsPctWithPair: setUsPctWithPair, usPoolTotal: usPoolTotal,
+            usCopyBucket: usCopyBucket, CAT_COL: CAT_COL, stripDur: stripDur, US_SPORT_ORDER: US_SPORT_ORDER, DAY_L: DAY_L, DAYS: DAYS });
+        }));
+    }));
   }
 
-  var emptyMsg = !active.length ? h('div', { style: { background: '#fff', borderRadius: 12, padding: '40px 20px', textAlign: 'center', color: '#6b7280', fontSize: 14, boxShadow: '0 1px 4px rgba(17,24,39,.07)' } },
-    'No show types are toggled on for this week. Flip on the ones on-air above (e.g. NFL \u2014 Live) to start building rotations.') : null;
-
-  return h('div', null,
-    h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, flexWrap: 'wrap' } },
-      h('span', { style: { fontSize: 13, fontWeight: 600 } }, 'Week commencing:'),
-      h('input', { type: 'date', value: wc, onChange: function (e) { setWc(e.target.value); }, style: { border: '1px solid #d1d5db', borderRadius: 8, padding: '6px 10px', fontSize: 13 } }),
-      h('span', { style: { fontSize: 11, color: '#9ca3af' } }, 'ESPN only \u2014 show-type rotations. A creative can sit in every active show type at its own %.'),
-      espnExpiredCount > 0 ? h('label', { style: { fontSize: 11, color: '#6b7280', display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer' } },
-        h('input', { type: 'checkbox', checked: showExpEsp, onChange: function (e) { setShowExpEsp(e.target.checked); } }),
-        'Show expired (' + espnExpiredCount + ')') : null,
-      active.length ? h('button', { onClick: exportUsXLSX, style: { marginLeft: 'auto', background: '#1d6f42', color: '#fff', border: 'none', borderRadius: 9, padding: '8px 16px', fontSize: 13, fontWeight: 800, cursor: 'pointer' } }, '\u2193 Export ESPN Excel') : null
-    ),
-    toggleStrip,
-    colSelector,
-    grid,
-    emptyMsg
-  );
+  return h('div', null, header, toggleStrip, dayTabs, splitCtl, body);
 }
 
+function USBucket(props) {
+  var h = React.createElement;
+  var st = props.st, day = props.day, sec = props.sec, secs = props.secs, active = props.active;
+  var espnCre = props.espnCre, usPct = props.usPct, setUsPctWithPair = props.setUsPctWithPair, usPoolTotal = props.usPoolTotal;
+  var usCopyBucket = props.usCopyBucket, CAT_COL = props.CAT_COL, stripDur = props.stripDur, US_SPORT_ORDER = props.US_SPORT_ORDER, DAY_L = props.DAY_L, DAYS = props.DAYS;
+
+  function poolBlock(dur, label) {
+    var rows = espnCre.filter(function (c) { return String(c.dur) === dur; });
+    if (!rows.length) return null;
+    var total = usPoolTotal(day, sec.id, st.k, dur);
+    var tc = total === 100 ? '#059669' : (total > 100 ? '#dc2626' : '#b45309');
+    var bySport = {};
+    rows.forEach(function (c) { (bySport[c.cat] = bySport[c.cat] || []).push(c); });
+    var trs = [];
+    US_SPORT_ORDER.forEach(function (sport) {
+      var grp = (bySport[sport] || []).sort(function (a, b) { return a.keyNumber < b.keyNumber ? -1 : 1; });
+      if (!grp.length) return;
+      var col = CAT_COL[sport] || '#6b7280';
+      trs.push(h('tr', { key: 'sp' + sport }, h('td', { colSpan: 3, style: { background: col + '15', color: col, fontWeight: 700, fontSize: 10, padding: '3px 8px', textTransform: 'uppercase', letterSpacing: '.03em' } }, sport)));
+      grp.forEach(function (c) {
+        trs.push(h('tr', { key: c.id, style: { borderTop: '1px solid #f4f5f7' } },
+          h('td', { style: { padding: '4px 8px', fontFamily: 'ui-monospace,Menlo,monospace', fontWeight: 700, fontSize: 11 } }, c.keyNumber),
+          h('td', { style: { padding: '4px 8px', fontSize: 12 } }, stripDur(c.title)),
+          h('td', { style: { padding: '4px 8px', textAlign: 'center', width: 70 } },
+            h('input', { value: usPct(day, sec.id, st.k, c.id), onChange: function (e) { setUsPctWithPair(day, sec.id, st.k, c.id, e.target.value); },
+              placeholder: '%', style: { width: 52, border: '1px solid #d1d5db', borderRadius: 6, padding: '3px 6px', fontSize: 12, textAlign: 'center' } }))));
+      });
+    });
+    return h('div', { style: { flex: '1 1 320px', minWidth: 300 } },
+      h('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 8px', background: '#fafafa', borderRadius: '6px 6px 0 0' } },
+        h('span', { style: { fontSize: 11, fontWeight: 700, color: '#374151' } }, label),
+        h('span', { style: { fontSize: 11, fontWeight: 800, color: tc } }, total + '% ' + (total === 100 ? '\u2713' : ''))),
+      h('table', { style: { width: '100%', borderCollapse: 'collapse' } }, h('tbody', null, trs)));
+  }
+
+  var p15 = poolBlock('15', ':15 spots'), p30 = poolBlock('30', ':30 spots');
+  // copy-from picker: sources = every other bucket in this day's sections + same showtype other days is too much; keep to current-day buckets
+  var sources = [];
+  secs.forEach(function (s2) {
+    active.forEach(function (o) {
+      if (s2.id === sec.id && o.k === st.k) return;
+      sources.push({ day: day, sec: s2.id, st: o.k, label: (secs.length > 1 ? s2.label + ' \u00b7 ' : '') + o.label });
+    });
+  });
+
+  return h('div', { style: { background: '#fff', borderRadius: 12, boxShadow: '0 1px 4px rgba(17,24,39,.07)', overflow: 'hidden', marginBottom: 12 } },
+    h('div', { style: { padding: '8px 14px', background: st.col, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' } },
+      h('span', { style: { fontWeight: 800, fontSize: 13 } }, st.label),
+      h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 5 } },
+        h('span', { style: { fontSize: 10, opacity: .85 } }, 'copy from:'),
+        h('select', { value: '', onChange: function (e) { if (e.target.value) { var s = sources[parseInt(e.target.value)]; usCopyBucket(s.day, s.sec, s.st, day, sec.id, st.k); e.target.value = ''; } },
+          style: { border: 'none', borderRadius: 6, padding: '3px 6px', fontSize: 11 } },
+          [h('option', { key: '', value: '' }, '\u2014 another bucket \u2014')].concat(sources.map(function (s, i) { return h('option', { key: i, value: i }, s.label); }))))),
+    h('div', { style: { display: 'flex', gap: 16, flexWrap: 'wrap', padding: 12 } }, p15, p30,
+      (!p15 && !p30) ? h('div', { style: { color: '#9ca3af', fontSize: 12, padding: 8 } }, 'No ESPN creatives to allocate.') : null));
+}
 function PlatformTabHeader(props) {
   var tab = props.tab, planNet = props.planNet, setPlanNet = props.setPlanNet;
   var h = React.createElement;
@@ -2335,6 +2340,9 @@ function App() {
   var stUsOn = useState({}),
     usOn = stUsOn[0],
     setUsOn = stUsOn[1];
+  var stUsSplit = useState({}),
+    usSplit = stUsSplit[0],
+    setUsSplit = stUsSplit[1];
   var stRdcDay = useState('sun'),
     rdcDay = stRdcDay[0],
     setRdcDay = stRdcDay[1];
@@ -2531,6 +2539,7 @@ function App() {
           }
           var rUS1 = await window.storage.get('mi2_usmi').catch(function(){return null;}); if(rUS1&&rUS1.value){try{setUsMI(JSON.parse(rUS1.value));}catch(e){}}
           var rUS2 = await window.storage.get('mi2_uson').catch(function(){return null;}); if(rUS2&&rUS2.value){try{setUsOn(JSON.parse(rUS2.value));}catch(e){}}
+          var rUS3 = await window.storage.get('mi2_ussplit').catch(function(){return null;}); if(rUS3&&rUS3.value){try{setUsSplit(JSON.parse(rUS3.value));}catch(e){}}
           var r7 = await window.storage.get('mi_rdcmi').catch(function () {
             return null;
           });
@@ -2585,6 +2594,9 @@ function App() {
   }, [usMI, loaded]);
   useEffect(function () {
     if (loaded) window.storage.set('mi2_uson', JSON.stringify(usOn)).catch(function () {});
+  }, [usOn, loaded]);
+  useEffect(function () {
+    if (loaded) window.storage.set('mi2_ussplit', JSON.stringify(usSplit)).catch(function () {});
   }, [snaps, loaded]);
   useEffect(function () {
     if (loaded) window.storage.set('mi_emails2', JSON.stringify(emailConfig)).catch(function () {});
@@ -3458,46 +3470,100 @@ function App() {
       var u = Object.assign({}, p); u[wc] = wk; return u;
     });
   }
-  function usPct(stKey, creativeId) {
-    return usMI[wc] && usMI[wc][stKey] && usMI[wc][stKey][creativeId] != null ? usMI[wc][stKey][creativeId] : '';
+  function usActiveShowtypes() { return US_SHOWTYPES.filter(function (st) { return isUsOn(st.k); }); }
+  function daySplit(day) {
+    var cfg = usSplit[wc] && usSplit[wc][day];
+    if (!cfg || !cfg.splits || cfg.splits < 2) return { splits: 1, times: [] };
+    return cfg;
   }
-  function setUsPct(stKey, creativeId, val) {
+  function setDaySplit(day, cfg) {
+    setUsSplit(function (p) {
+      var wk = Object.assign({}, p[wc] || {});
+      if (!cfg || cfg.splits < 2) { delete wk[day]; } else { wk[day] = cfg; }
+      var u = Object.assign({}, p); u[wc] = wk; return u;
+    });
+  }
+  function daySections(day) {
+    var cfg = daySplit(day);
+    if (cfg.splits < 2) { return [{ id: 's0', label: 'All day' }]; }
+    var out = [];
+    for (var i = 0; i < cfg.splits; i++) {
+      var from = i === 0 ? 'Start' : (cfg.times[i - 1] || '?');
+      var to = i === cfg.splits - 1 ? 'End' : (cfg.times[i] || '?');
+      out.push({ id: 's' + i, label: from + ' \u2013 ' + to });
+    }
+    return out;
+  }
+  function usPct(day, sec, stKey, creativeId) {
+    var d = usMI[wc] && usMI[wc][day] && usMI[wc][day][sec] && usMI[wc][day][sec][stKey];
+    return d && d[creativeId] != null ? d[creativeId] : '';
+  }
+  function setUsPct(day, sec, stKey, creativeId, val) {
     val = String(val).replace(/[^0-9.]/g, '');
     setUsMI(function (p) {
       var wk = Object.assign({}, p[wc] || {});
-      var col = Object.assign({}, wk[stKey] || {});
+      var dd = Object.assign({}, wk[day] || {});
+      var ss = Object.assign({}, dd[sec] || {});
+      var col = Object.assign({}, ss[stKey] || {});
       if (val === '') { delete col[creativeId]; } else { col[creativeId] = val; }
-      wk[stKey] = col;
-      var u = Object.assign({}, p); u[wc] = wk; return u;
-      });
-  }
-  // Auto-copy: when a Live bucket value is set and its Ancillary pair is empty, mirror it
-  function setUsPctWithPair(stKey, creativeId, val) {
-    setUsPct(stKey, creativeId, val);
-    var st = US_SHOWTYPES.find(function (x) { return x.k === stKey; });
-    if (st && st.pair) {
-      var pairHasValue = usMI[wc] && usMI[wc][st.pair] && usMI[wc][st.pair][creativeId] != null && usMI[wc][st.pair][creativeId] !== '';
-      if (!pairHasValue) setUsPct(st.pair, creativeId, val);
-    }
-  }
-  function usColTotal(stKey) {
-    var col = usMI[wc] && usMI[wc][stKey] || {};
-    return Object.keys(col).reduce(function (s2, id) { return s2 + (parseFloat(col[id]) || 0); }, 0);
-  }
-  function syncAncFromLive(liveKey) {
-    var st = US_SHOWTYPES.find(function (x) { return x.k === liveKey; });
-    if (!st || !st.pair) return;
-    setUsMI(function (p) {
-      var wk = Object.assign({}, p[wc] || {});
-      wk[st.pair] = Object.assign({}, wk[liveKey] || {});
+      ss[stKey] = col; dd[sec] = ss; wk[day] = dd;
       var u = Object.assign({}, p); u[wc] = wk; return u;
     });
-    zap('\u2713 ' + st.label.replace('Live', 'Ancillary') + ' matched to Live');
   }
-  function usActiveShowtypes() { return US_SHOWTYPES.filter(function (st) { return isUsOn(st.k); }); }
-  function usCreativesFor(stKey) {
-    // creatives that have an ESPN tick, sorted by sport then key
-    return creatives.filter(function (c) { return c.nets && c.nets.espn; }).sort(function (a, b) {
+  function setUsPctWithPair(day, sec, stKey, creativeId, val) {
+    setUsPct(day, sec, stKey, creativeId, val);
+    var st = US_SHOWTYPES.find(function (x) { return x.k === stKey; });
+    if (st && st.pair) {
+      var cur = usMI[wc] && usMI[wc][day] && usMI[wc][day][sec] && usMI[wc][day][sec][st.pair];
+      var pairHasValue = cur && cur[creativeId] != null && cur[creativeId] !== '';
+      if (!pairHasValue) setUsPct(day, sec, st.pair, creativeId, val);
+    }
+  }
+  function usPoolTotal(day, sec, stKey, dur) {
+    var col = (usMI[wc] && usMI[wc][day] && usMI[wc][day][sec] && usMI[wc][day][sec][stKey]) || {};
+    return Object.keys(col).reduce(function (s2, id) {
+      var c = creatives.find(function (x) { return String(x.id) === String(id); });
+      if (!c || String(c.dur) !== String(dur)) return s2;
+      return s2 + (parseFloat(col[id]) || 0);
+    }, 0);
+  }
+  function usCopyBucket(fromDay, fromSec, fromSt, toDay, toSec, toSt) {
+    setUsMI(function (p) {
+      var wk = Object.assign({}, p[wc] || {});
+      var src = (wk[fromDay] && wk[fromDay][fromSec] && wk[fromDay][fromSec][fromSt]) || {};
+      var dd = Object.assign({}, wk[toDay] || {});
+      var ss = Object.assign({}, dd[toSec] || {});
+      ss[toSt] = Object.assign({}, src);
+      dd[toSec] = ss; wk[toDay] = dd;
+      var u = Object.assign({}, p); u[wc] = wk; return u;
+    });
+    zap('\u2713 Copied rotation');
+  }
+  function usCopyDay(fromDay, toDay) {
+    setUsMI(function (p) {
+      var wk = Object.assign({}, p[wc] || {});
+      wk[toDay] = JSON.parse(JSON.stringify(wk[fromDay] || {}));
+      var u = Object.assign({}, p); u[wc] = wk; return u;
+    });
+    setUsSplit(function (p) {
+      var wk = Object.assign({}, p[wc] || {});
+      if (wk[fromDay]) wk[toDay] = JSON.parse(JSON.stringify(wk[fromDay])); else delete wk[toDay];
+      var u = Object.assign({}, p); u[wc] = wk; return u;
+    });
+    zap('\u2713 Copied whole day');
+  }
+  function usCopySection(day, fromSec, toSec) {
+    setUsMI(function (p) {
+      var wk = Object.assign({}, p[wc] || {});
+      var dd = Object.assign({}, wk[day] || {});
+      dd[toSec] = JSON.parse(JSON.stringify(dd[fromSec] || {}));
+      wk[day] = dd;
+      var u = Object.assign({}, p); u[wc] = wk; return u;
+    });
+    zap('\u2713 Copied timeslot');
+  }
+  function usCreativesFor() {
+    return creatives.filter(function (c) { return c.nets && c.nets.espn && !isExpired(c); }).sort(function (a, b) {
       var ai = US_SPORT_ORDER.indexOf(a.cat), bi = US_SPORT_ORDER.indexOf(b.cat);
       if (ai < 0) ai = 99; if (bi < 0) bi = 99;
       if (ai !== bi) return ai - bi;
@@ -3512,61 +3578,62 @@ function App() {
       var XLSX = getXLSX();
       var hasStyles = XLSX !== XLSX_NPM;
       var aoa = [], meta = [];
-      var push = function (arr, m) { var rr = arr.slice(); while (rr.length < 8) rr.push(''); aoa.push(rr); meta.push(m || { type: 'blank' }); };
-      // Title spanning
+      var push = function (arr, m) { var rr = arr.slice(); while (rr.length < 6) rr.push(''); aoa.push(rr); meta.push(m || { type: 'blank' }); };
+      var wd = getWeekDates(wc);
       push(['ESPN Material Instructions \u2014 WC ' + fmt(wc)], { type: 'title' });
       push([], {});
-      // Build left blocks (by show type) and right bank (by sport) into the SAME rows
-      // Left occupies cols A-D, gap col E, right bank cols F-H
-      var espnCre = creatives.filter(function (c) { return c.nets && c.nets.espn && !isExpired(c); });
-      // Right bank grouped by sport
-      var bank = [];
-      US_SPORT_ORDER.forEach(function (sport) {
-        var group = espnCre.filter(function (c) { return c.cat === sport; }).sort(function (a, b) { return a.keyNumber < b.keyNumber ? -1 : 1; });
-        if (!group.length) return;
-        bank.push({ type: 'sporthdr', sport: sport });
-        group.forEach(function (c) { bank.push({ type: 'bankrow', c: c }); });
-        bank.push({ type: 'blank' });
+      DAYS.forEach(function (day, di) {
+        var secs = daySections(day);
+        var dayHasData = false;
+        secs.forEach(function (sec) {
+          active.forEach(function (st) {
+            var col = (usMI[wc] && usMI[wc][day] && usMI[wc][day][sec.id] && usMI[wc][day][sec.id][st.k]) || {};
+            if (Object.keys(col).length) dayHasData = true;
+          });
+        });
+        if (!dayHasData) return;
+        push([DAY_L[di] + ' ' + fmt(wd[di] || '')], { type: 'day' });
+        secs.forEach(function (sec) {
+          var secHasData = false;
+          active.forEach(function (st) {
+            var col = (usMI[wc] && usMI[wc][day] && usMI[wc][day][sec.id] && usMI[wc][day][sec.id][st.k]) || {};
+            if (Object.keys(col).length) secHasData = true;
+          });
+          if (!secHasData) return;
+          if (secs.length > 1) push(['  ' + sec.label], { type: 'section' });
+          active.forEach(function (st) {
+            var col = (usMI[wc] && usMI[wc][day] && usMI[wc][day][sec.id] && usMI[wc][day][sec.id][st.k]) || {};
+            var ids = Object.keys(col);
+            if (!ids.length) return;
+            push([st.label], { type: 'sthdr', st: st });
+            [['15', ':15 spots'], ['30', ':30 spots']].forEach(function (dp) {
+              var dur = dp[0];
+              var rows = ids.map(function (id) { return creatives.find(function (c) { return String(c.id) === String(id); }); })
+                .filter(function (c) { return c && String(c.dur) === dur; })
+                .sort(function (a, b) { return (parseFloat(col[b.id]) || 0) - (parseFloat(col[a.id]) || 0); });
+              if (!rows.length) return;
+              push(['  ' + dp[1], '', '', 'KEY', 'CREATIVE', 'ROTATION'], { type: 'durhdr' });
+              rows.forEach(function (c) {
+                push(['', '', '', c.keyNumber, stripDur(c.title), col[c.id] + '%'], { type: 'row' });
+              });
+            });
+          });
+          push([], {});
+        });
       });
-      // Left blocks
-      var left = [];
-      active.forEach(function (st) {
-        var col = usMI[wc] && usMI[wc][st.k] || {};
-        var rows = espnCre.filter(function (c) { return col[c.id] != null && col[c.id] !== ''; }).sort(function (a, b) { return (parseFloat(col[b.id]) || 0) - (parseFloat(col[a.id]) || 0); });
-        left.push({ type: 'sthdr', st: st });
-        left.push({ type: 'lhdr' });
-        rows.forEach(function (c) { left.push({ type: 'lrow', c: c, pct: col[c.id] }); });
-        left.push({ type: 'blank' });
-      });
-      var maxLen = Math.max(left.length, bank.length);
-      for (var i = 0; i < maxLen; i++) {
-        var L = left[i], R = bank[i];
-        var row = ['', '', '', '', '', '', '', ''];
-        var m = { left: L ? L.type : null, right: R ? R.type : null, leftSt: L && L.st, rightSport: R && R.sport };
-        if (L) {
-          if (L.type === 'sthdr') row[0] = L.st.label;
-          else if (L.type === 'lhdr') { row[0] = 'KEY'; row[1] = 'DURATION'; row[2] = 'CREATIVE'; row[3] = 'ROTATION'; }
-          else if (L.type === 'lrow') { row[0] = L.c.keyNumber; row[1] = ':' + L.c.dur; row[2] = stripDur(L.c.title); row[3] = L.pct + '%'; }
-        }
-        if (R) {
-          if (R.type === 'sporthdr') row[5] = R.sport;
-          else if (R.type === 'bankrow') { row[5] = R.c.keyNumber; row[6] = ':' + R.c.dur; row[7] = stripDur(R.c.title); }
-        }
-        push(row, m);
-      }
+      if (aoa.length <= 2) { zap('\u26A0 Nothing allocated to export yet'); return false; }
       var ws = XLSX.utils.aoa_to_sheet(aoa);
-      ws['!cols'] = [{ wch: 16 }, { wch: 10 }, { wch: 34 }, { wch: 10 }, { wch: 3 }, { wch: 16 }, { wch: 10 }, { wch: 34 }];
-      var cell = function (r, c) { var a = XLSX.utils.encode_cell({ r: r, c: c }); if (!ws[a]) ws[a] = { t: 's', v: '' }; return ws[a]; };
-      var hex = function (x) { return (x || '').replace('#', ''); };
+      ws['!cols'] = [{ wch: 4 }, { wch: 4 }, { wch: 4 }, { wch: 18 }, { wch: 40 }, { wch: 12 }];
       if (hasStyles) {
+        var cell = function (r, c) { var a = XLSX.utils.encode_cell({ r: r, c: c }); if (!ws[a]) ws[a] = { t: 's', v: '' }; return ws[a]; };
+        var hex = function (x) { return (x || '').replace('#', ''); };
         for (var r = 0; r < meta.length; r++) {
           var mm = meta[r];
           if (mm.type === 'title') { cell(r, 0).s = { font: { bold: true, sz: 14 } }; }
-          if (mm.left === 'sthdr') { var sc = cell(r, 0); sc.s = { font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 12 }, fill: { fgColor: { rgb: hex(mm.leftSt.col) } } }; for (var cc = 1; cc < 4; cc++) cell(r, cc).s = { fill: { fgColor: { rgb: hex(mm.leftSt.col) } } }; }
-          if (mm.left === 'lhdr') { for (var c2 = 0; c2 < 4; c2++) cell(r, c2).s = { font: { bold: true, sz: 10 }, fill: { fgColor: { rgb: 'EEEEEE' } } }; }
-          if (mm.left === 'lrow') { for (var c3 = 0; c3 < 4; c3++) cell(r, c3).s = { font: { sz: 10 }, alignment: { horizontal: c3 === 3 ? 'center' : 'left' } }; }
-          if (mm.right === 'sporthdr') { cell(r, 5).s = { font: { bold: true, sz: 11 } }; }
-          if (mm.right === 'bankrow') { for (var c4 = 5; c4 < 8; c4++) cell(r, c4).s = { font: { sz: 10 } }; }
+          else if (mm.type === 'day') { cell(r, 0).s = { font: { bold: true, sz: 13, color: { rgb: 'C00000' } } }; }
+          else if (mm.type === 'section') { cell(r, 0).s = { font: { bold: true, italic: true, sz: 11, color: { rgb: '444444' } } }; }
+          else if (mm.type === 'sthdr') { for (var c1 = 0; c1 < 6; c1++) cell(r, c1).s = { font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 11 }, fill: { fgColor: { rgb: hex(mm.st.col) } } }; }
+          else if (mm.type === 'durhdr') { for (var c2 = 0; c2 < 6; c2++) cell(r, c2).s = { font: { bold: true, sz: 10 }, fill: { fgColor: { rgb: 'EEEEEE' } } }; }
         }
       }
       var wb = XLSX.utils.book_new();
@@ -3945,6 +4012,7 @@ function App() {
       rdcMI: rdcMI,
       usMI: usMI,
       usOn: usOn,
+      usSplit: usSplit,
       sentMap: sentMap,
       dueOv: dueOv,
       snaps: snaps,
@@ -4017,6 +4085,7 @@ function App() {
     if (d.rdcMI) setRdcMI(d.rdcMI);
     if (d.usMI) setUsMI(d.usMI);
     if (d.usOn) setUsOn(d.usOn);
+    if (d.usSplit) setUsSplit(d.usSplit);
     if (d.sentMap) setSentMap(d.sentMap);
     if (d.dueOv) setDueOv(d.dueOv);
     if (d.emails) setEmailConfig(Object.assign({}, DEFAULT_EMAILS, d.emails));
@@ -4133,7 +4202,7 @@ function App() {
     return function () {
       if (syncRef.current.mainTimer) clearTimeout(syncRef.current.mainTimer);
     };
-  }, [allRots, allNotes, rdcMI, usMI, usOn, sentMap, dueOv, emailConfig, snaps, loaded]);
+  }, [allRots, allNotes, rdcMI, usMI, usOn, usSplit, sentMap, dueOv, emailConfig, snaps, loaded]);
   // Debounced push — creatives (separate channel so agency key-adds can't collide with rotation edits)
   useEffect(function () {
     if (!loaded || !syncRef.current.ready) return;
@@ -4208,7 +4277,6 @@ function App() {
                 cat: CATS.indexOf(item.cat) >= 0 ? item.cat : next[idx].cat,
                 air: item.air != null ? item.air : next[idx].air,
                 end: item.end != null ? item.end : next[idx].end,
-                note: item.note != null ? item.note : next[idx].note,
                 nets: item.nets ? nets : next[idx].nets
               });
               updated++;
@@ -4221,7 +4289,6 @@ function App() {
                 cat: CATS.indexOf(item.cat) >= 0 ? item.cat : 'Other',
                 air: item.air || '',
                 end: item.end || '',
-                note: item.note || '',
                 mat: item.mat || 'ok',
                 nets: nets
               });
@@ -4480,12 +4547,14 @@ function App() {
       display: 'none'
     }
   })))), tab === 'ussports' && /*#__PURE__*/React.createElement(USSports, {
-    wc: wc, setWc: setWC, fmt: fmt, creatives: creatives,
+    wc: wc, setWc: setWC, fmt: fmt, creatives: creatives, isExpired: isExpired,
     US_SHOWTYPES: US_SHOWTYPES, US_SPORT_ORDER: US_SPORT_ORDER,
+    CAT_COL: CAT_COL, stripDur: stripDur, DAYS: DAYS, DAY_L: DAY_L, getWeekDates: getWeekDates,
     isUsOn: isUsOn, toggleUsOn: toggleUsOn, usActiveShowtypes: usActiveShowtypes,
-    usPct: usPct, setUsPctWithPair: setUsPctWithPair, usColTotal: usColTotal,
-    syncAncFromLive: syncAncFromLive, usCreativesFor: usCreativesFor, exportUsXLSX: exportUsXLSX,
-    CAT_COL: (typeof CAT_COL !== 'undefined' ? CAT_COL : {}), stripDur: stripDur
+    daySplit: daySplit, setDaySplit: setDaySplit, daySections: daySections,
+    usPct: usPct, setUsPctWithPair: setUsPctWithPair, usPoolTotal: usPoolTotal,
+    usCopyBucket: usCopyBucket, usCopyDay: usCopyDay, usCopySection: usCopySection,
+    usCreativesFor: usCreativesFor, exportUsXLSX: exportUsXLSX
   }), tab === 'send' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -5374,18 +5443,7 @@ function App() {
         ...TH,
         textAlign: 'center'
       }
-    }, "Material"), /*#__PURE__*/React.createElement("th", {
-      style: {
-        ...TH,
-        width: 180
-      }
-    }, "Notes", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontWeight: 400,
-        color: '#9ca3af',
-        fontSize: 9
-      }
-    }, "shown on all tabs")), allPlatNets.map(function (n) {
+    }, "Material"), allPlatNets.map(function (n) {
       return /*#__PURE__*/React.createElement("th", {
         key: n.k,
         style: {
@@ -5518,24 +5576,7 @@ function App() {
         value: "feeding"
       }, "Feeding thru"), /*#__PURE__*/React.createElement("option", {
         value: "missing"
-      }, "Not arrived"))), /*#__PURE__*/React.createElement("td", {
-        style: {
-          ...TD,
-          padding: '4px 6px'
-        }
-      }, /*#__PURE__*/React.createElement("input", {
-        type: "text",
-        value: c.note || '',
-        placeholder: "e.g. Don't use \u2014 talent no longer approved",
-        onChange: function (e) {
-          updateCreativeField(c.id, 'note', e.target.value);
-        },
-        style: {
-          ...editInp,
-          width: '100%',
-          backgroundColor: c.note ? '#fffbeb' : '#fff'
-        }
-      })), allPlatNets.map(function (n) {
+      }, "Not arrived"))), allPlatNets.map(function (n) {
         return /*#__PURE__*/React.createElement("td", {
           key: n.k,
           style: {
