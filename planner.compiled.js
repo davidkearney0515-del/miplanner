@@ -53,7 +53,7 @@ function currentWeekSunday() {
   return localISO(d);
 }
 const SV = "5";
-const BUILD = "14 Sep 2026";
+const BUILD = "15 Sep 2026";
 const fmt = s => s ? s.split('-').reverse().join('/') : '—';
 const fmtShort = s => s ? s.split('-').reverse().join('/').slice(0, 5) : '';
 const CATS = ["AFL", "NRL", "NFL", "NBA", "MLB", "Racing", "Foxcatcher/StatMate", "World Cup", "Other"];
@@ -1325,8 +1325,8 @@ function CreativeRows(props) {
       textOverflow: 'ellipsis',
       whiteSpace: 'nowrap'
     },
-    title: c.title
-  }, c.title), /*#__PURE__*/React.createElement("td", {
+    title: c.note ? (c.title + ' \u2014 NOTE: ' + c.note) : c.title
+  }, c.title, c.note ? /*#__PURE__*/React.createElement("span", { title: c.note, style: { marginLeft: 5, fontSize: 9, color: '#b45309', fontWeight: 700 } }, '\uD83D\uDCDD') : null), /*#__PURE__*/React.createElement("td", {
     style: {
       ...TD,
       textAlign: 'center',
@@ -2934,6 +2934,7 @@ function App() {
             var qty = spotQty(spot);
             var instr = c ? qty + ' x ' + c.dur + 'secs' : '';
             if (spot.i) instr = instr ? instr + ' — ' + spot.i : spot.i;
+            if (c && c.note) instr = instr ? instr + ' — ' + c.note : c.note;
             pushRow([si === 0 ? dp.label : '', dp.time, si === 0 ? booked : '', 'Pointsbet', c ? c.cat : '', c ? c.dur : '', spot.k, '', spot.t || (c ? stripDur(c.title) : spot.k), instr, c && c.end ? fmt(c.end) : ''], {
               type: 'spot',
               dpLabel: si === 0,
@@ -3423,11 +3424,11 @@ function App() {
       if (!dayRows.length) return;
       if (data.length) data.push([]);
       data.push([DAY_L[i] + ' ' + fmtShort(date)]);
-      data.push(['Key Number', 'Creative Title', 'Duration', 'Category', 'Allocation', 'Notes']);
+      data.push(['Key Number', 'Creative Title', 'Duration', 'Category', 'Allocation', 'Notes', 'Key Note']);
       dayRows.forEach(function (r) {
         var raw = getDR(r.id, net, day);
         var alloc = raw + '%';
-        return data.push([r.keyNumber, r.title, ':' + r.dur, r.cat, alloc, getNote(r.id, day)]);
+        return data.push([r.keyNumber, r.title, ':' + r.dur, r.cat, alloc, getNote(r.id, day), r.note || '']);
       });
     });
     var csv = '\uFEFF' + data.map(function (r) {
@@ -3578,7 +3579,7 @@ function App() {
       var XLSX = getXLSX();
       var hasStyles = XLSX !== XLSX_NPM;
       var aoa = [], meta = [];
-      var push = function (arr, m) { var rr = arr.slice(); while (rr.length < 6) rr.push(''); aoa.push(rr); meta.push(m || { type: 'blank' }); };
+      var push = function (arr, m) { var rr = arr.slice(); while (rr.length < 7) rr.push(''); aoa.push(rr); meta.push(m || { type: 'blank' }); };
       var wd = getWeekDates(wc);
       push(['ESPN Material Instructions \u2014 WC ' + fmt(wc)], { type: 'title' });
       push([], {});
@@ -3612,9 +3613,9 @@ function App() {
                 .filter(function (c) { return c && String(c.dur) === dur; })
                 .sort(function (a, b) { return (parseFloat(col[b.id]) || 0) - (parseFloat(col[a.id]) || 0); });
               if (!rows.length) return;
-              push(['  ' + dp[1], '', '', 'KEY', 'CREATIVE', 'ROTATION'], { type: 'durhdr' });
+              push(['  ' + dp[1], '', '', 'KEY', 'CREATIVE', 'ROTATION', 'NOTE'], { type: 'durhdr' });
               rows.forEach(function (c) {
-                push(['', '', '', c.keyNumber, stripDur(c.title), col[c.id] + '%'], { type: 'row' });
+                push(['', '', '', c.keyNumber, stripDur(c.title), col[c.id] + '%', c.note || ''], { type: 'row' });
               });
             });
           });
@@ -3623,7 +3624,7 @@ function App() {
       });
       if (aoa.length <= 2) { zap('\u26A0 Nothing allocated to export yet'); return false; }
       var ws = XLSX.utils.aoa_to_sheet(aoa);
-      ws['!cols'] = [{ wch: 4 }, { wch: 4 }, { wch: 4 }, { wch: 18 }, { wch: 40 }, { wch: 12 }];
+      ws['!cols'] = [{ wch: 4 }, { wch: 4 }, { wch: 4 }, { wch: 18 }, { wch: 40 }, { wch: 12 }, { wch: 30 }];
       if (hasStyles) {
         var cell = function (r, c) { var a = XLSX.utils.encode_cell({ r: r, c: c }); if (!ws[a]) ws[a] = { t: 's', v: '' }; return ws[a]; };
         var hex = function (x) { return (x || '').replace('#', ''); };
@@ -3632,8 +3633,8 @@ function App() {
           if (mm.type === 'title') { cell(r, 0).s = { font: { bold: true, sz: 14 } }; }
           else if (mm.type === 'day') { cell(r, 0).s = { font: { bold: true, sz: 13, color: { rgb: 'C00000' } } }; }
           else if (mm.type === 'section') { cell(r, 0).s = { font: { bold: true, italic: true, sz: 11, color: { rgb: '444444' } } }; }
-          else if (mm.type === 'sthdr') { for (var c1 = 0; c1 < 6; c1++) cell(r, c1).s = { font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 11 }, fill: { fgColor: { rgb: hex(mm.st.col) } } }; }
-          else if (mm.type === 'durhdr') { for (var c2 = 0; c2 < 6; c2++) cell(r, c2).s = { font: { bold: true, sz: 10 }, fill: { fgColor: { rgb: 'EEEEEE' } } }; }
+          else if (mm.type === 'sthdr') { for (var c1 = 0; c1 < 7; c1++) cell(r, c1).s = { font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 11 }, fill: { fgColor: { rgb: hex(mm.st.col) } } }; }
+          else if (mm.type === 'durhdr') { for (var c2 = 0; c2 < 7; c2++) cell(r, c2).s = { font: { bold: true, sz: 10 }, fill: { fgColor: { rgb: 'EEEEEE' } } }; }
         }
       }
       var wb = XLSX.utils.book_new();
@@ -3667,15 +3668,15 @@ function App() {
         if (!dayRows.length) return;
         any = true;
         push([DAY_L[i] + ' ' + fmt(date)], { type: 'date' });
-        push(['Key Number', 'Creative Title', 'Duration', 'Category', 'Allocation', 'Notes'], { type: 'header' });
+        push(['Key Number', 'Creative Title', 'Duration', 'Category', 'Allocation', 'Notes', 'Key Note'], { type: 'header' });
         dayRows.forEach(function (r) {
-          push([r.keyNumber, r.title, ':' + r.dur, r.cat, getDR(r.id, net, day) + '%', getNote(r.id, day) || ''], { type: 'spot' });
+          push([r.keyNumber, r.title, ':' + r.dur, r.cat, getDR(r.id, net, day) + '%', getNote(r.id, day) || '', r.note || ''], { type: 'spot' });
         });
         push([], { type: 'blank' });
       });
       if (!any) { zap('\u26A0 No ' + lbl + ' spots allocated this week'); return false; }
       var ws = XLSX.utils.aoa_to_sheet(aoa);
-      ws['!cols'] = [{ wch: 20 }, { wch: 44 }, { wch: 10 }, { wch: 20 }, { wch: 12 }, { wch: 26 }];
+      ws['!cols'] = [{ wch: 20 }, { wch: 44 }, { wch: 10 }, { wch: 20 }, { wch: 12 }, { wch: 26 }, { wch: 30 }];
       if (hasStyles) {
         var thin = { style: 'thin', color: { rgb: '000000' } };
         var border = { top: thin, bottom: thin, left: thin, right: thin };
@@ -3685,8 +3686,8 @@ function App() {
           var m = meta[r];
           if (m.type === 'title') { var t0 = cell(r, 0); t0.s = { font: { bold: true, sz: 14, color: { rgb: RED } } }; }
           else if (m.type === 'date') { var d0 = cell(r, 0); d0.s = { font: { bold: true, sz: 12, color: { rgb: RED } } }; }
-          else if (m.type === 'header') { for (var c = 0; c < 6; c++) { var hc = cell(r, c); hc.s = { font: { bold: true, color: { rgb: WHITE }, sz: 11 }, fill: { fgColor: { rgb: BLACK } }, alignment: { horizontal: c === 4 ? 'center' : 'left', vertical: 'center' }, border: border }; } }
-          else if (m.type === 'spot') { for (var c2 = 0; c2 < 6; c2++) { var sc = cell(r, c2); sc.s = { font: { color: { rgb: BLACK }, sz: 11 }, alignment: { horizontal: c2 === 4 ? 'center' : 'left', vertical: 'center' }, border: border }; } }
+          else if (m.type === 'header') { for (var c = 0; c < 7; c++) { var hc = cell(r, c); hc.s = { font: { bold: true, color: { rgb: WHITE }, sz: 11 }, fill: { fgColor: { rgb: BLACK } }, alignment: { horizontal: c === 4 ? 'center' : 'left', vertical: 'center' }, border: border }; } }
+          else if (m.type === 'spot') { for (var c2 = 0; c2 < 7; c2++) { var sc = cell(r, c2); sc.s = { font: { color: { rgb: BLACK }, sz: 11 }, alignment: { horizontal: c2 === 4 ? 'center' : 'left', vertical: 'center' }, border: border }; } }
         }
       }
       var wb = XLSX.utils.book_new();
@@ -5443,7 +5444,7 @@ function App() {
         ...TH,
         textAlign: 'center'
       }
-    }, "Material"), allPlatNets.map(function (n) {
+    }, "Material"), /*#__PURE__*/React.createElement("th", { style: TH }, "Note"), allPlatNets.map(function (n) {
       return /*#__PURE__*/React.createElement("th", {
         key: n.k,
         style: {
@@ -5576,7 +5577,15 @@ function App() {
         value: "feeding"
       }, "Feeding thru"), /*#__PURE__*/React.createElement("option", {
         value: "missing"
-      }, "Not arrived"))), allPlatNets.map(function (n) {
+      }, "Not arrived"))), /*#__PURE__*/React.createElement("td", {
+        style: { ...TD, padding: '4px 6px' }
+      }, /*#__PURE__*/React.createElement("input", {
+        type: "text",
+        value: c.note || '',
+        placeholder: 'Note (shows on all sheets)',
+        onChange: function (e) { updateCreativeField(c.id, 'note', e.target.value); },
+        style: { ...editInp, minWidth: 160 }
+      })), allPlatNets.map(function (n) {
         return /*#__PURE__*/React.createElement("td", {
           key: n.k,
           style: {
