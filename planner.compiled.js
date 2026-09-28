@@ -52,8 +52,17 @@ function currentWeekSunday() {
   d.setDate(d.getDate() - d.getDay());
   return localISO(d);
 }
+// Snap any date (ISO yyyy-mm-dd) back to the Sunday of that week.
+// Keeps "Week Commencing" always a Sunday so day buckets stay aligned with their real dates.
+function snapToSunday(iso) {
+  if (!iso) return iso;
+  var d = new Date(iso + 'T00:00:00');
+  if (isNaN(d.getTime())) return iso;
+  d.setDate(d.getDate() - d.getDay());
+  return localISO(d);
+}
 const SV = "5";
-const BUILD = "15 Sep 2026";
+const BUILD = "29 Sep 2026";
 const fmt = s => s ? s.split('-').reverse().join('/') : '—';
 const fmtShort = s => s ? s.split('-').reverse().join('/').slice(0, 5) : '';
 const CATS = ["AFL", "NRL", "NFL", "NBA", "MLB", "Racing", "Foxcatcher/StatMate", "World Cup", "Other"];
@@ -2140,7 +2149,7 @@ function USSports(props) {
   // ---- header row: week + export ----
   var header = h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, flexWrap: 'wrap' } },
     h('span', { style: { fontSize: 13, fontWeight: 600 } }, 'Week commencing:'),
-    h('input', { type: 'date', value: wc, onChange: function (e) { setWc(e.target.value); }, style: { border: '1px solid #d1d5db', borderRadius: 8, padding: '6px 10px', fontSize: 13 } }),
+    h('input', { type: 'date', value: wc, onChange: function (e) { setWc(snapToSunday(e.target.value)); }, style: { border: '1px solid #d1d5db', borderRadius: 8, padding: '6px 10px', fontSize: 13 } }),
     h('span', { style: { fontSize: 11, color: '#9ca3af' } }, 'ESPN \u00b7 per-day, per-show-type. 15s and 30s each total 100% separately.'),
     active.length ? h('button', { onClick: exportUsXLSX, style: { marginLeft: 'auto', background: '#1d6f42', color: '#fff', border: 'none', borderRadius: 9, padding: '8px 16px', fontSize: 13, fontWeight: 800, cursor: 'pointer' } }, '\u2193 Export ESPN Excel') : null
   );
@@ -2485,7 +2494,7 @@ function App() {
           var r3 = await window.storage.get('mi_wc').catch(function () {
             return null;
           });
-          if (r3 && r3.value) setWC(r3.value);
+          if (r3 && r3.value) setWC(snapToSunday(r3.value));
           var r4 = await window.storage.get('mi2_notes').catch(function () {
             return null;
           });
@@ -2888,6 +2897,10 @@ function App() {
   }
   function exportRDCMI(daysSubset, label) {
     var exportDays = daysSubset && daysSubset.length ? daysSubset : DAYS;
+    // Belt-and-braces: dates must be anchored to the week's Sunday so day buckets
+    // (sun/mon/tue...) line up with their real dates in the exported file.
+    var wcSun = snapToSunday(wc);
+    var weekDatesExp = getWeekDates(wcSun);
     var cw = rdcMI[wc] || initRdcWeek();
     var XLSX = getXLSX();
     var hasStyles = XLSX !== XLSX_NPM;
@@ -2902,7 +2915,7 @@ function App() {
     }
     DAYS.forEach(function (day, i) {
       if (exportDays.indexOf(day) < 0) return;
-      var dd = weekDates[i] || '';
+      var dd = weekDatesExp[i] || '';
       pushRow([fmtRDC(dd), '', '', '', '', '', '', '', '', '', ''], {
         type: 'date'
       });
@@ -4050,7 +4063,7 @@ function App() {
         if (d.dueOv) setDueOv(d.dueOv);
         if (d.emails) setEmailConfig(Object.assign({}, DEFAULT_EMAILS, d.emails));
         if (d.rdcMI) setRdcMI(d.rdcMI);
-        if (d.wc) setWC(d.wc);
+        if (d.wc) setWC(snapToSunday(d.wc));
         if (d.platform) setPlatform(d.platform);
         zap('\u2713 Backup restored');
       } catch (err) {
@@ -4573,7 +4586,7 @@ function App() {
     type: "date",
     value: wc,
     onChange: function (e) {
-      setWC(e.target.value);
+      setWC(snapToSunday(e.target.value));
     },
     style: {
       border: '1px solid #d1d5db',
@@ -4915,7 +4928,7 @@ function App() {
     type: "date",
     value: wc,
     onChange: function (e) {
-      setWC(e.target.value);
+      setWC(snapToSunday(e.target.value));
     },
     style: {
       border: '1px solid #d1d5db',
@@ -5829,7 +5842,7 @@ function App() {
     type: "date",
     value: wc,
     onChange: function (e) {
-      setWC(e.target.value);
+      setWC(snapToSunday(e.target.value));
     },
     style: {
       border: '1px solid #d1d5db',
