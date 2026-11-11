@@ -150,6 +150,21 @@ const US_SHOWTYPES = [
   { k: 'other', label: 'Other Programming', sport: 'Other', tier: 'live', col: '#B58A00', tint: '#EFE1B3' }
 ];
 const US_ALL_LABEL = 'ALL PROGRAMMING';
+// Light tint per sport for each creative row in the ESPN export, plus a colour key under the title
+const US_SPORT_FILL = { NFL: ['DCE6F2', 'NFL'], NBA: ['FADBD8', 'NBA'], MLB: ['D5F0E6', 'MLB'], Racing: ['DDF2DC', 'Racing'],
+  FC: ['FDEBD0', 'Foxcatcher'], SM: ['E8DEF8', 'StatMate'], Other: ['EEEEEE', 'Other'] };
+function usSportOf(c) {
+  var key = String(c.keyNumber || ''), t = (key + ' ' + (c.title || '')).toUpperCase();
+  if (c.cat === 'Foxcatcher/StatMate') return (/^SM/.test(key.toUpperCase()) || t.indexOf('STATMATE') >= 0) ? 'SM' : 'FC';
+  if (c.cat === 'NFL' || c.cat === 'NBA' || c.cat === 'MLB' || c.cat === 'Racing') return c.cat;
+  if (/^SM/i.test(key)) return 'SM';
+  if (/^FXC/i.test(key)) return 'FC';
+  if (t.indexOf('NFL') >= 0) return 'NFL';
+  if (t.indexOf('NBA') >= 0) return 'NBA';
+  if (t.indexOf('MLB') >= 0) return 'MLB';
+  if (/^PB\d\dR/i.test(key) || t.indexOf('RACING') >= 0) return 'Racing';
+  return 'Other';
+}
 const US_SPORT_ORDER = ['NFL', 'NBA', 'MLB', 'Racing', 'Foxcatcher/StatMate', 'AFL', 'NRL', 'World Cup', 'Other'];
 const RDC_DAYPARTS = [{
   k: 'morning',
@@ -2151,7 +2166,7 @@ function USSports(props) {
   var header = h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, flexWrap: 'wrap' } },
     h('span', { style: { fontSize: 13, fontWeight: 600 } }, 'Week commencing:'),
     h('input', { type: 'date', value: wc, onChange: function (e) { setWc(snapToSunday(e.target.value)); }, style: { border: '1px solid #d1d5db', borderRadius: 8, padding: '6px 10px', fontSize: 13 } }),
-    h('span', { style: { fontSize: 11, color: '#9ca3af' } }, 'ESPN \u00b7 per day, per sports code. 15s and 30s each total 100% separately. The export groups codes with matching rotations, and a timeslot where every code matches goes out as ALL PROGRAMMING.'),
+    h('span', { style: { fontSize: 11, color: '#9ca3af' } }, 'ESPN \u00b7 per day, per sports code. 15s and 30s each total 100% separately. The export is a one-page grid: days and sports codes with the same rotation share a column, so it only splits where the material changes.'),
     active.length ? h('button', { onClick: exportUsXLSX, style: { marginLeft: 'auto', background: '#1d6f42', color: '#fff', border: 'none', borderRadius: 9, padding: '8px 16px', fontSize: 13, fontWeight: 800, cursor: 'pointer' } }, '\u2193 Export ESPN Excel') : null
   );
 
@@ -3622,78 +3637,169 @@ function App() {
     return { groups: groups, empty: empty, sig: groups.map(function (g) { return g.label + '#' + g.sig; }).join('||') };
   }
 
+  // ---- ESPN export: one-page rotation grid ----
+  // One table per spot length. Keys run down the side; across the top, days with identical rotations
+  // share a column group, split only where the material changes (a timeslot, or a sports code with
+  // its own mix). Each column is one rotation and adds to 100%.
+  function usGridColumns(day, active, dur) {
+    var slots = [];
+    daySections(day).forEach(function (sec) {
+      var groups = [];
+      active.forEach(function (st) {
+        var full = usRotation(day, sec.id, st.k), rot = {};
+        Object.keys(full).forEach(function (id) {
+          var c = creatives.find(function (x) { return String(x.id) === String(id); });
+          if (c && String(c.dur) === dur) rot[id] = full[id];
+        });
+        if (!Object.keys(rot).length) return;
+        var sig = usRotationSig(rot);
+        var g = groups.find(function (x) { return x.sig === sig; });
+        if (g) g.sts.push(st); else groups.push({ sig: sig, rot: rot, sts: [st] });
+      });
+      if (!groups.length) return;
+      var sig = groups.map(function (g) { return g.sts.map(function (s) { return s.k; }).join('+') + '#' + g.sig; }).join('||');
+      var last = slots[slots.length - 1];
+      if (last && last.sig === sig && last.to === sec.from) { last.to = sec.to; return; }
+      slots.push({ from: sec.from, to: sec.to, sig: sig, groups: groups });
+    });
+    var cols = [];
+    slots.forEach(function (s) {
+      var allDay = s.from === 'Start' && s.to === 'End';
+      var time = allDay ? 'All day' : s.from + ' – ' + s.to;
+      s.groups.forEach(function (g) {
+        var everyone = g.sts.length === active.length && active.length > 1;
+        var prog = everyone ? 'All programming' : g.sts.map(function (x) { return x.label; }).join(' + ');
+        var label = everyone ? (allDay ? prog : time) : (allDay ? prog : time + ', ' + prog);
+        cols.push({ label: label, rot: g.rot, sig: label + '#' + g.sig });
+      });
+    });
+    return cols;
+  }
+  function usGridTable(active, dur) {
+    var groups = [], prev = -2;
+    DAYS.forEach(function (day, di) {
+      var cols = usGridColumns(day, active, dur);
+      if (!cols.length) return;
+      var sig = cols.map(function (c) { return c.sig; }).join('||');
+      var last = groups[groups.length - 1];
+      if (last && last.sig === sig && prev === di - 1) last.last = di;
+      else groups.push({ first: di, last: di, sig: sig, cols: cols });
+      prev = di;
+    });
+    return groups;
+  }
+
   function exportUsXLSX() {
     try {
       var active = usActiveShowtypes();
-      if (!active.length) { zap('\u26A0 Toggle on at least one sports code first'); return false; }
+      if (!active.length) { zap('⚠ Toggle on at least one sports code first'); return false; }
       var XLSX = getXLSX();
       var hasStyles = XLSX !== XLSX_NPM;
-      var aoa = [], meta = [];
-      var push = function (arr, m) { var rr = arr.slice(); while (rr.length < 7) rr.push(''); aoa.push(rr); meta.push(m || { type: 'blank' }); };
       var wd = getWeekDates(wc);
-      var usedAll = false, gaps = [];
-      push(['ESPN Material Instructions \u2014 WC ' + fmt(wc)], { type: 'title' });
-      var legendAt = aoa.length;
-      push([], {});
+      var dayLbl = function (di) { return DAY_L[di] + ' ' + (fmt(wd[di] || '') || '').slice(0, 5); };
+      var C = function (id) { return creatives.find(function (x) { return String(x.id) === String(id); }); };
+      var gaps = [], badTotals = [];
       DAYS.forEach(function (day, di) {
-        // Work out each timeslot's groups, then merge back-to-back timeslots that came out the same
-        var blocks = [];
-        daySections(day).forEach(function (sec) {
+        var secs = daySections(day);
+        secs.forEach(function (sec) {
           var g = usGroupsFor(day, sec.id, active);
-          if (!g.groups.length) return;
-          var last = blocks[blocks.length - 1];
-          if (last && last.sig === g.sig && last.to === sec.from) { last.to = sec.to; return; }
-          blocks.push({ from: sec.from, to: sec.to, sig: g.sig, groups: g.groups, empty: g.empty });
-        });
-        if (!blocks.length) return;
-        push([DAY_L[di] + ' ' + fmt(wd[di] || '')], { type: 'day' });
-        blocks.forEach(function (blk) {
-          var timed = blocks.length > 1 || blk.from !== 'Start' || blk.to !== 'End';
-          if (timed) push(['  ' + blk.from + ' \u2013 ' + blk.to], { type: 'section' });
-          if (blk.empty.length) gaps.push(blk.empty.map(function (s) { return s.label; }).join(', ') + ' ' + DAY_L[di] + (timed ? ' ' + blk.from + '\u2013' + blk.to : ''));
-          blk.groups.forEach(function (g) {
-            if (g.all) usedAll = true;
-            push([g.label], { type: 'sthdr', col: g.sts.length === 1 ? g.sts[0].col : (g.all ? '#111827' : '#374151') });
-            var ids = Object.keys(g.rot), rot = g.rot;
-            [['15', ':15 spots'], ['30', ':30 spots']].forEach(function (dp) {
-              var dur = dp[0];
-              var rows = ids.map(function (id) { return creatives.find(function (c) { return String(c.id) === String(id); }); })
-                .filter(function (c) { return c && String(c.dur) === dur; })
-                .sort(function (a, b) { return (parseFloat(rot[b.id]) || 0) - (parseFloat(rot[a.id]) || 0); });
-              if (!rows.length) return;
-              push(['  ' + dp[1], '', '', 'KEY', 'CREATIVE', 'ROTATION', 'NOTE'], { type: 'durhdr' });
-              rows.forEach(function (c) {
-                push(['', '', '', c.keyNumber, stripDur(c.title), rot[c.id] + '%', c.note || ''], { type: 'row' });
-              });
-            });
-          });
-          push([], {});
+          if (g.groups.length && g.empty.length) gaps.push(g.empty.map(function (s) { return s.label; }).join(', ') + ' ' + DAY_L[di] + (secs.length > 1 ? ' ' + sec.label : ''));
         });
       });
-      if (aoa.length <= 2) { zap('\u26A0 Nothing allocated to export yet'); return false; }
-      if (usedAll) {
-        // Say once what ALL PROGRAMMING covers this week, so traffic doesn't have to guess
-        var legend = [US_ALL_LABEL + ' = ' + active.map(function (s) { return s.label; }).join(', ')];
-        while (legend.length < 7) legend.push('');
-        aoa.splice(legendAt, 0, legend); meta.splice(legendAt, 0, { type: 'legend' });
-      }
-      var ws = XLSX.utils.aoa_to_sheet(aoa);
-      ws['!cols'] = [{ wch: 4 }, { wch: 4 }, { wch: 4 }, { wch: 18 }, { wch: 40 }, { wch: 12 }, { wch: 30 }];
+      var tables = [['15', usGridTable(active, '15')], ['30', usGridTable(active, '30')]].filter(function (t) { return t[1].length; });
+      if (!tables.length) { zap('⚠ Nothing allocated to export yet'); return false; }
+      var firstDay = 6, lastDay = 0;
+      tables.forEach(function (t) { t[1].forEach(function (g) { firstDay = Math.min(firstDay, g.first); lastDay = Math.max(lastDay, g.last); }); });
+      var INK = '1F2937', MID = '4B5563', PAPER = 'F3F4F6', LINE = 'D1D5DB';
+      var thin = { style: 'thin', color: { rgb: LINE } }, box = { top: thin, bottom: thin, left: thin, right: thin };
+      var font = function (bold, color) { return { name: 'Calibri', sz: 11, bold: !!bold, color: { rgb: color || INK } }; };
+      var bg = function (rgb) { return { patternType: 'solid', fgColor: { rgb: rgb } }; };
+      var aoa = [], styles = {}, merges = [], rowsH = [];
+      var put = function (r, c, v, s) { while (aoa.length <= r) aoa.push([]); aoa[r][c] = v; if (s) styles[r + ',' + c] = s; };
+      var sportRank = ['NFL', 'NBA', 'MLB', 'SM', 'Racing', 'FC', 'Other'];
+      var r = 0, maxCols = 0;
+      put(r, 0, 'ESPN Material Instructions — WC ' + fmt(wc) + ' (' + DAY_L[firstDay] + (lastDay > firstDay ? '-' + DAY_L[lastDay] : '') + ')', { font: font(true) });
+      r += 1;
+      var used = {};
+      tables.forEach(function (t) { t[1].forEach(function (g) { g.cols.forEach(function (c) { Object.keys(c.rot).forEach(function (id) { used[usSportOf(C(id))] = true; }); }); }); });
+      put(r, 2, 'Colour key', { font: font(false, MID), alignment: { horizontal: 'right' } });
+      sportRank.filter(function (s) { return used[s]; }).forEach(function (s, i) {
+        put(r, 3 + i, US_SPORT_FILL[s][1], { font: font(true), fill: bg(US_SPORT_FILL[s][0]), alignment: { horizontal: 'center' } });
+      });
+      r += 2;
+      tables.forEach(function (t) {
+        var dur = t[0], groups = t[1], colmap = [];
+        groups.forEach(function (g) { g.cols.forEach(function (c) { colmap.push(c.rot); }); });
+        var n = colmap.length; maxCols = Math.max(maxCols, n);
+        for (var c0 = 0; c0 < 3 + n; c0++) put(r, c0, c0 === 0 ? ':' + dur + ' SPOTS' : '', { font: font(true, 'FFFFFF'), fill: bg(INK) });
+        r += 1;
+        ['KEY', 'CREATIVE', 'NOTE'].forEach(function (h, c1) {
+          put(r, c1, h, { font: font(true), fill: bg(PAPER), alignment: { vertical: 'center' }, border: box });
+          put(r + 1, c1, '', { fill: bg(PAPER), border: box });
+          merges.push({ s: { r: r, c: c1 }, e: { r: r + 1, c: c1 } });
+        });
+        var col = 3;
+        groups.forEach(function (g) {
+          var lbl = g.first === g.last ? dayLbl(g.first) : dayLbl(g.first) + ' – ' + dayLbl(g.last);
+          g.cols.forEach(function (cc, i) {
+            put(r, col + i, i === 0 ? lbl : '', { font: font(true, 'FFFFFF'), fill: bg(MID), alignment: { horizontal: 'center' }, border: box });
+            put(r + 1, col + i, cc.label, { font: font(true), fill: bg(PAPER), alignment: { horizontal: 'center', vertical: 'center', wrapText: true }, border: box });
+          });
+          if (g.cols.length > 1) merges.push({ s: { r: r, c: col }, e: { r: r, c: col + g.cols.length - 1 } });
+          g.cols.forEach(function (cc) {
+            var vals = Object.keys(cc.rot).map(function (id) { return parseFloat(cc.rot[id]) || 0; });
+            var s = Math.round(vals.reduce(function (a, b) { return a + b; }, 0) * 100) / 100;
+            cc.total = s;
+            cc.ok = s === 100 || (vals.length > 1 && vals.every(function (v) { return v === vals[0]; }) && vals[0] === Math.round(100 / vals.length));
+            if (!cc.ok) badTotals.push(':' + dur + ' ' + lbl + ' ' + cc.label + ' = ' + s + '%');
+          });
+          col += g.cols.length;
+        });
+        rowsH[r + 1] = { hpt: 32 };
+        r += 2;
+        var idx = function (id) { return creatives.findIndex(function (x) { return String(x.id) === String(id); }); };
+        var ids = [];
+        colmap.forEach(function (m) { Object.keys(m).forEach(function (id) { if (ids.indexOf(id) < 0) ids.push(id); }); });
+        ids.sort(function (a, b) {
+          var sa = sportRank.indexOf(usSportOf(C(a))), sb = sportRank.indexOf(usSportOf(C(b)));
+          return sa !== sb ? sa - sb : idx(a) - idx(b);
+        });
+        ids.forEach(function (id) {
+          var cr = C(id), tint = bg(US_SPORT_FILL[usSportOf(cr)][0]);
+          put(r, 0, cr.keyNumber, { font: font(true), fill: tint, border: box });
+          put(r, 1, stripDur(cr.title), { font: font(false), fill: tint, border: box });
+          put(r, 2, cr.note || '', { font: font(false), fill: tint, border: box });
+          colmap.forEach(function (m, i) {
+            var on = m[id] != null;
+            put(r, 3 + i, on ? m[id] + '%' : '–', { font: font(on, on ? INK : '9CA3AF'), fill: tint, alignment: { horizontal: 'center' }, border: box });
+          });
+          r += 1;
+        });
+        put(r, 2, 'Total', { font: font(true, MID), alignment: { horizontal: 'right' } });
+        var ci = 0;
+        groups.forEach(function (g) {
+          g.cols.forEach(function (cc) {
+            put(r, 3 + ci, cc.total + '%', { font: font(true, cc.ok ? MID : 'C00000'), alignment: { horizontal: 'center' } });
+            ci += 1;
+          });
+        });
+        r += 2;
+      });
+      var rows = aoa.map(function (row) { var o = []; for (var i = 0; i < row.length; i++) o.push(row[i] == null ? '' : row[i]); return o; });
+      var ws = XLSX.utils.aoa_to_sheet(rows);
       if (hasStyles) {
-        var cell = function (r, c) { var a = XLSX.utils.encode_cell({ r: r, c: c }); if (!ws[a]) ws[a] = { t: 's', v: '' }; return ws[a]; };
-        var hex = function (x) { return (x || '').replace('#', ''); };
-        for (var r = 0; r < meta.length; r++) {
-          var mm = meta[r];
-          if (mm.type === 'title') { cell(r, 0).s = { font: { bold: true, sz: 14 } }; }
-          else if (mm.type === 'day') { cell(r, 0).s = { font: { bold: true, sz: 13, color: { rgb: 'C00000' } } }; }
-          else if (mm.type === 'section') { cell(r, 0).s = { font: { bold: true, italic: true, sz: 11, color: { rgb: '444444' } } }; }
-          else if (mm.type === 'legend') { cell(r, 0).s = { font: { italic: true, sz: 10, color: { rgb: '444444' } } }; }
-          else if (mm.type === 'sthdr') { for (var c1 = 0; c1 < 7; c1++) cell(r, c1).s = { font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 11 }, fill: { fgColor: { rgb: hex(mm.col) } } }; }
-          else if (mm.type === 'durhdr') { for (var c2 = 0; c2 < 7; c2++) cell(r, c2).s = { font: { bold: true, sz: 10 }, fill: { fgColor: { rgb: 'EEEEEE' } } }; }
-        }
+        Object.keys(styles).forEach(function (k) {
+          var p = k.split(','), a = XLSX.utils.encode_cell({ r: +p[0], c: +p[1] });
+          if (!ws[a]) ws[a] = { t: 's', v: '' };
+          ws[a].s = styles[k];
+        });
       }
+      ws['!merges'] = merges;
+      ws['!cols'] = [{ wch: 17 }, { wch: 64 }, { wch: 26 }];
+      for (var w = 0; w < maxCols; w++) ws['!cols'].push({ wch: 13 });
+      ws['!rows'] = rowsH;
       var wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'ESPN US Sports');
+      XLSX.utils.book_append_sheet(wb, ws, 'ESPN MI');
       var wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
       var blob = new Blob([wbout], { type: 'application/octet-stream' });
       var url = URL.createObjectURL(blob);
@@ -3701,9 +3807,12 @@ function App() {
       a.download = 'PointsBet_ESPN_US_Sports_WC' + wc + '.xlsx';
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       setTimeout(function () { URL.revokeObjectURL(url); }, 150);
-      zap(gaps.length ? '\u2713 ESPN MI exported \u00b7 \u26a0 no rotation for: ' + gaps.join('; ') : '\u2713 ESPN US Sports MI exported');
+      var warn = [];
+      if (gaps.length) warn.push('no rotation for: ' + gaps.join('; '));
+      if (badTotals.length) warn.push('not 100%: ' + badTotals.join('; '));
+      zap(warn.length ? '✓ ESPN MI exported · ⚠ ' + warn.join(' · ') : '✓ ESPN US Sports MI exported');
       return true;
-    } catch (e) { zap('\u26A0 Export failed: ' + (e && e.message ? e.message : e)); return false; }
+    } catch (e) { zap('⚠ Export failed: ' + (e && e.message ? e.message : e)); return false; }
   }
 
   function exportGridXLSX(net) {
