@@ -153,6 +153,33 @@ const US_ALL_LABEL = 'ALL PROGRAMMING';
 // Light tint per sport for each creative row in the ESPN export, plus a colour key under the title
 const US_SPORT_FILL = { NFL: ['DCE6F2', 'NFL'], NBA: ['FADBD8', 'NBA'], MLB: ['D5F0E6', 'MLB'], Racing: ['DDF2DC', 'Racing'],
   FC: ['FDEBD0', 'Foxcatcher'], SM: ['E8DEF8', 'StatMate'], Other: ['EEEEEE', 'Other'] };
+// David's rule: every rotation % ends in 0 or 5. Each key in a rotation keeps at least 5%, the rest goes
+// to the largest remainders (ties to the bigger share, then the key number), so a column still adds to
+// 100. A rotation that doesn't add to 100 is rounded key by key. The MI skill's script rounds the same way.
+function usRound5(rot, keyOf) {
+  var ids = Object.keys(rot).filter(function (id) { return (parseFloat(rot[id]) || 0) > 0; });
+  var val = {}, pct = {}, sum = 0;
+  ids.forEach(function (id) { val[id] = parseFloat(rot[id]); sum += val[id]; pct[id] = Math.max(5, Math.floor((val[id] + 1e-9) / 5) * 5); });
+  var cmpKey = function (a, b) { var x = keyOf(a), y = keyOf(b); return x < y ? -1 : x > y ? 1 : 0; };
+  if (Math.abs(sum - 100) <= 0.5) {
+    var left = 100 - ids.reduce(function (t, id) { return t + pct[id]; }, 0);
+    while (left > 0) {
+      ids.sort(function (a, b) { return ((val[b] - pct[b]) - (val[a] - pct[a])) || (val[b] - val[a]) || cmpKey(a, b); });
+      pct[ids[0]] += 5; left -= 5;
+    }
+    while (left < 0) {
+      var over = ids.filter(function (id) { return pct[id] > 5; });
+      if (!over.length) break;
+      over.sort(function (a, b) { return ((val[a] - pct[a]) - (val[b] - pct[b])) || (val[a] - val[b]) || cmpKey(a, b); });
+      pct[over[0]] -= 5; left += 5;
+    }
+  } else {
+    ids.forEach(function (id) { pct[id] = Math.max(5, Math.floor(val[id] / 5 + 0.5) * 5); });
+  }
+  var out = {};
+  ids.forEach(function (id) { out[id] = String(pct[id]); });
+  return out;
+}
 function usSportOf(c) {
   var key = String(c.keyNumber || ''), t = (key + ' ' + (c.title || '')).toUpperCase();
   if (c.cat === 'Foxcatcher/StatMate') return (/^SM/.test(key.toUpperCase()) || t.indexOf('STATMATE') >= 0) ? 'SM' : 'FC';
@@ -2166,7 +2193,7 @@ function USSports(props) {
   var header = h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, flexWrap: 'wrap' } },
     h('span', { style: { fontSize: 13, fontWeight: 600 } }, 'Week commencing:'),
     h('input', { type: 'date', value: wc, onChange: function (e) { setWc(snapToSunday(e.target.value)); }, style: { border: '1px solid #d1d5db', borderRadius: 8, padding: '6px 10px', fontSize: 13 } }),
-    h('span', { style: { fontSize: 11, color: '#9ca3af' } }, 'ESPN \u00b7 per day, per sports code. 15s and 30s each total 100% separately. The export is a one-page grid: days and sports codes with the same rotation share a column, so it only splits where the material changes.'),
+    h('span', { style: { fontSize: 11, color: '#9ca3af' } }, 'ESPN \u00b7 per day, per sports code. 15s and 30s each total 100% separately. The export is a one-page grid: days and sports codes with the same rotation share a column, so it only splits where the material changes. Every % is rounded to 5% steps (at least 5% per key, columns still add to 100%).'),
     active.length ? h('button', { onClick: exportUsXLSX, style: { marginLeft: 'auto', background: '#1d6f42', color: '#fff', border: 'none', borderRadius: 9, padding: '8px 16px', fontSize: 13, fontWeight: 800, cursor: 'pointer' } }, '\u2193 Export ESPN Excel') : null
   );
 
@@ -3641,8 +3668,9 @@ function App() {
   // One table per spot length. Keys run down the side; across the top, days with identical rotations
   // share a column group, split only where the material changes (a timeslot, or a sports code with
   // its own mix). Each column is one rotation and adds to 100%.
-  function usGridColumns(day, active, dur) {
+  function usGridColumns(day, active, dur, stats) {
     var slots = [];
+    var keyOf = function (id) { var c = creatives.find(function (x) { return String(x.id) === String(id); }); return c ? String(c.keyNumber) : ''; };
     daySections(day).forEach(function (sec) {
       var groups = [];
       active.forEach(function (st) {
@@ -3652,6 +3680,9 @@ function App() {
           if (c && String(c.dur) === dur) rot[id] = full[id];
         });
         if (!Object.keys(rot).length) return;
+        var r5 = usRound5(rot, keyOf);
+        if (stats && usRotationSig(r5) !== usRotationSig(rot)) stats.rounded += 1;
+        rot = r5;
         var sig = usRotationSig(rot);
         var g = groups.find(function (x) { return x.sig === sig; });
         if (g) g.sts.push(st); else groups.push({ sig: sig, rot: rot, sts: [st] });
@@ -3675,10 +3706,10 @@ function App() {
     });
     return cols;
   }
-  function usGridTable(active, dur) {
+  function usGridTable(active, dur, stats) {
     var groups = [], prev = -2;
     DAYS.forEach(function (day, di) {
-      var cols = usGridColumns(day, active, dur);
+      var cols = usGridColumns(day, active, dur, stats);
       if (!cols.length) return;
       var sig = cols.map(function (c) { return c.sig; }).join('||');
       var last = groups[groups.length - 1];
@@ -3706,7 +3737,8 @@ function App() {
           if (g.groups.length && g.empty.length) gaps.push(g.empty.map(function (s) { return s.label; }).join(', ') + ' ' + DAY_L[di] + (secs.length > 1 ? ' ' + sec.label : ''));
         });
       });
-      var tables = [['15', usGridTable(active, '15')], ['30', usGridTable(active, '30')]].filter(function (t) { return t[1].length; });
+      var stats = { rounded: 0 };
+      var tables = [['15', usGridTable(active, '15', stats)], ['30', usGridTable(active, '30', stats)]].filter(function (t) { return t[1].length; });
       if (!tables.length) { zap('⚠ Nothing allocated to export yet'); return false; }
       var firstDay = 6, lastDay = 0;
       tables.forEach(function (t) { t[1].forEach(function (g) { firstDay = Math.min(firstDay, g.first); lastDay = Math.max(lastDay, g.last); }); });
@@ -3810,7 +3842,8 @@ function App() {
       var warn = [];
       if (gaps.length) warn.push('no rotation for: ' + gaps.join('; '));
       if (badTotals.length) warn.push('not 100%: ' + badTotals.join('; '));
-      zap(warn.length ? '✓ ESPN MI exported · ⚠ ' + warn.join(' · ') : '✓ ESPN US Sports MI exported');
+      var note = stats.rounded ? ' \u00b7 ' + stats.rounded + ' rotations rounded to 5% steps' : '';
+      zap(warn.length ? '\u2713 ESPN MI exported' + note + ' \u00b7 \u26a0 ' + warn.join(' \u00b7 ') : '\u2713 ESPN US Sports MI exported' + note);
       return true;
     } catch (e) { zap('⚠ Export failed: ' + (e && e.message ? e.message : e)); return false; }
   }
