@@ -103,7 +103,7 @@ const NETS = [{
   customMI: true
 }, {
   k: 'nine',
-  label: 'Nine Radio',
+  label: 'Tapt Media',
   platform: 'radio',
   geo: 'NSW + QLD'
 }, {
@@ -462,7 +462,7 @@ const DEFAULT_EMAILS = {
   nine: {
     to: '',
     cc: '',
-    subject: 'PointsBet \u2014 Nine Radio Material Instructions WC [WC_DATE]',
+    subject: 'PointsBet \u2014 Tapt Media Material Instructions WC [WC_DATE]',
     body: 'Hi,\n\nPlease find attached the Material Instructions for the week commencing [WC_DATE].\n\nRegards'
   },
   sen: {
@@ -2334,8 +2334,13 @@ function PlatformTabHeader(props) {
       h('span', { style: { fontSize: 13, fontWeight: 700, color: '#111827' } }, '🏈 Fox Footy'),
       h('span', { style: { fontSize: 11, color: '#9ca3af' } }, 'National · TV rotation'));
   }
+  if (tab === 'tapt') {
+    return h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, padding: '10px 14px', backgroundColor: '#f9fafb', borderRadius: 8, border: '1px solid #e5e7eb' } },
+      h('span', { style: { fontSize: 13, fontWeight: 700, color: '#111827' } }, 'Tapt Media'),
+      h('span', { style: { fontSize: 11, color: '#9ca3af' } }, '2GB Sydney and 4BC Brisbane \u00b7 radio rotation'));
+  }
   // radio: station sub-selector
-  var stations = [['nine', 'Nine Radio'], ['sen', 'SEN Radio'], ['triplem', 'Triple M']];
+  var stations = [['nine', 'Tapt Media'], ['sen', 'SEN Radio'], ['triplem', 'Triple M']];
   return h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, padding: '10px 14px', backgroundColor: '#f9fafb', borderRadius: 8, border: '1px solid #e5e7eb', flexWrap: 'wrap' } },
     h('span', { style: { fontSize: 13, fontWeight: 700, color: '#111827', marginRight: 4 } }, '📻 Radio'),
     stations.map(function (st) {
@@ -3426,6 +3431,316 @@ function SevenEleven(props) {
   return h('div', null, header, settings, dayTabs, editor, preview);
 }
 
+// ---- SEN radio: NFL 2026-27 partnership ----
+// Built from SEN's signed media plan (7 Sep 2026). SEN's plan labels its weeks with 2025's Monday dates
+// (8 Sep, 15 Sep...), one day late for 2026; the weeks here are the real 2026 Mondays, which still line up
+// with the game weeks (week 1 is the Melbourne game on Fri 11 Sep, the Super Bowl is the week of 8 Feb).
+var SEN_WEEKS_FROM = '2026-09-07';
+var SEN_GAME_WEEKS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', 'WC', 'DIV', 'CON', '', 'SB', '', ''];
+var SEN_WEEKLY = (function () { var w = {}; for (var i = 0; i < 21; i++) w[i] = 1; w[22] = 1; return w; })();
+function senEvery(n) { var o = {}; Object.keys(SEN_WEEKLY).forEach(function (k) { o[k] = n; }); return o; }
+var SEN_PLAN = {
+  title: 'SEN x PointsBet NFL 2026–27',
+  investment: 36000, casualValue: 297370,
+  programs: [
+    { id: 'news', name: 'NFL Melbourne game update in news', when: 'Friday 11 September', stations: '20 SEN stations across VIC, NSW, SA, TAS, WA, QLD and NT, plus streaming',
+      ents: [{ id: 'news_mention', name: 'Brand mention in news', len: '4 words', type: 'words', limit: 4, qty: { 0: 6 } }] },
+    { id: 'captains', name: 'The Captains Run with Sam Edmund', when: 'Friday 9am–midday AEST (Goldfields 10am–midday)', stations: 'SEN 1116 Melbourne, Goulburn Valley 1260, SEN SA 1629 (Adelaide, Mt Gambier), SEN Tassie 1629, SEN Top End 1611, Goldfields 1611, plus streaming',
+      ents: [
+        { id: 'cap_credit', name: 'Arryn Siposs segment: product credit', len: '8 words', type: 'words', limit: 8, qty: senEvery(1) },
+        { id: 'cap_segment', name: 'Arryn Siposs segment', len: '3 min', type: 'brief', qty: senEvery(1) },
+        { id: 'cap_ext', name: 'Arryn Siposs segment: extended product credit', len: '16 words', type: 'words', limit: 16, qty: senEvery(1) }] },
+    { id: 'fivefor25', name: '5 for $25 / StatMate commercials', when: 'Fri, Mon, Tue 9–11am', stations: 'SEN 1116 Melbourne, SEN Track 1593, RSN 927',
+      ents: [{ id: 'fivefor25_spots', name: 'Recorded commercials', len: '15s', type: 'spots', dur: '15', qty: senEvery(3) }] },
+    { id: 'bmad', name: 'BMAD', when: 'Fri–Sun', stations: 'SEN Track 1593, RSN 927',
+      ents: [{ id: 'bmad_spots', name: 'Recorded commercials', len: '15s', type: 'spots', dur: '15', qty: senEvery(3) }] },
+    { id: 'upd_mt', name: 'PointsBet Update', when: 'Mon–Thu 9am–12pm', stations: 'SEN 1116 Melbourne',
+      ents: [{ id: 'upd_mt', name: 'Pre-recorded PointsBet Update', len: '60s', type: 'update', qty: { 0: 2, 1: 2, 2: 2, 3: 2 } }] },
+    { id: 'upd_fri', name: 'PointsBet Update', when: 'Friday 9–10am', stations: 'SEN 1116 Melbourne',
+      ents: [{ id: 'upd_fri', name: 'Pre-recorded or live PointsBet Update', len: '60s', type: 'update', qty: senEvery(1) }] },
+    { id: 'digital', name: 'Digital', when: 'Weekly', stations: 'SEN Instagram',
+      ents: [{ id: 'insta', name: 'Instagram story share', len: 'Story', type: 'note', qty: senEvery(1) }] },
+    { id: 'sportsday', name: 'SportsDay VIC', when: 'Monday 5:30–7:30pm', stations: 'SEN 1116 Melbourne',
+      ents: [{ id: 'sportsday_spots', name: 'In-show commercials', len: '15s', type: 'spots', dur: '15', qty: { 2: 3 } }] },
+    { id: 'bmadc', name: 'BMAD commercials', when: 'Sun & Mon 5am–7pm', stations: 'SEN 1116 Melbourne',
+      ents: [{ id: 'bmadc_spots', name: 'Commercials', len: '15s', type: 'spots', dur: '15', qty: { 1: 8, 2: 8 } }] },
+    { id: 'invites', name: 'NFL Melbourne game invites', when: 'Friday 11 September', stations: '',
+      ents: [{ id: 'invites', name: 'Game invites (invite only)', len: '', type: 'info', qty: { 0: 3 } }] }
+  ]
+};
+function senAddDays(iso, n) { var d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+function senMonday(iso) { var d = new Date(iso + 'T00:00:00Z'); var wd = (d.getUTCDay() + 6) % 7; d.setUTCDate(d.getUTCDate() - wd); return d.toISOString().slice(0, 10); }
+function senWeekIndex(wk) { return Math.round((Date.parse(wk + 'T00:00:00Z') - Date.parse(SEN_WEEKS_FROM + 'T00:00:00Z')) / 604800000); }
+function senWeekISO(i) { return senAddDays(SEN_WEEKS_FROM, i * 7); }
+function senGameWeek(i) { var g = SEN_GAME_WEEKS[i]; return g == null ? '' : g; }
+function senGameLabel(i) {
+  var g = senGameWeek(i);
+  if (!g) return i >= 0 && i < SEN_GAME_WEEKS.length ? 'no SEN bookings' : 'outside the plan';
+  return { WC: 'Wild Card', DIV: 'Divisional', CON: 'Conference', SB: 'Super Bowl' }[g] || 'Week ' + g;
+}
+// Entitlements running in a week, in plan order, with their quantity.
+function senRunning(wk) {
+  var i = senWeekIndex(wk), out = [];
+  SEN_PLAN.programs.forEach(function (p) {
+    p.ents.forEach(function (e) { var q = e.qty[i]; if (q) out.push({ prog: p, ent: e, qty: q }); });
+  });
+  return out;
+}
+function senWords(t) { return String(t || '').trim() ? String(t).trim().split(/\s+/).length : 0; }
+function senHasMaterial(ent, m) {
+  if (!m) return false;
+  if (ent.type === 'spots') return (m.keys || []).some(function (k) { return String(k.k || '').trim(); });
+  if (ent.type === 'update') return m.mode === 'live' ? !!String(m.text || '').trim() : (m.keys || []).some(function (k) { return String(k.k || '').trim(); });
+  return !!String(m.text || '').trim();
+}
+// Week status for the season strip: 'none' (nothing to supply), 'todo', 'part' or 'done'.
+function senStatus(sen, wk) {
+  var run = senRunning(wk).filter(function (r) { return r.ent.type !== 'info'; });
+  if (!run.length) return 'none';
+  var mat = (((sen || {}).weeks || {})[wk] || {}).mat || {};
+  var have = run.filter(function (r) { return senHasMaterial(r.ent, mat[r.ent.id]); }).length;
+  return have === 0 ? 'todo' : have === run.length ? 'done' : 'part';
+}
+// A week with nothing entered starts from the most recent earlier week.
+function senCarry(sen, wk) {
+  var weeks = (sen || {}).weeks || {};
+  if (weeks[wk]) return null;
+  var prev = Object.keys(weeks).filter(function (k) { return k < wk; }).sort();
+  if (!prev.length) return null;
+  var src = weeks[prev[prev.length - 1]] || {};
+  return { mat: JSON.parse(JSON.stringify(src.mat || {})), note: '' };
+}
+
+function senFmt(iso, yr) { if (!iso) return ''; var p = iso.split('-'); return p[2] + '/' + p[1] + (yr ? '/' + p[0] : ''); }
+function senKeyTitle(creatives, k) {
+  var c = (creatives || []).find(function (x) { return String(x.keyNumber || '').trim().toUpperCase() === String(k || '').trim().toUpperCase(); });
+  return c ? c.title : '';
+}
+function senShares(keys) {
+  var ks = (keys || []).filter(function (x) { return String(x.k || '').trim(); });
+  if (ks.length <= 1) return ks.map(function (x) { return { k: x.k.trim(), s: 100 }; });
+  var rot = {};
+  ks.forEach(function (x) { rot[x.k.trim()] = (rot[x.k.trim()] || 0) + (parseFloat(x.s) || 0); });
+  var r = usRound5(rot, function (k) { return k; });
+  return Object.keys(r).map(function (k) { return { k: k, s: parseFloat(r[k]) }; });
+}
+
+// SEN MI for one week: every entitlement running, with its key(s) and share or the wording to read.
+function senExport(sen, wk, creatives, XLSX, zap) {
+  try {
+    var run = senRunning(wk).filter(function (r) { return r.ent.type !== 'info'; });
+    if (!run.length) { zap('⚠ Nothing in the SEN plan for wc ' + senFmt(wk)); return; }
+    var hasStyles = XLSX !== XLSX_NPM;
+    var INK = '1F2937', MID = '4B5563', PAPER = 'F3F4F6', LINE = 'D1D5DB';
+    var thin = { style: 'thin', color: { rgb: LINE } }, box = { top: thin, bottom: thin, left: thin, right: thin };
+    var i = senWeekIndex(wk), wkData = ((sen || {}).weeks || {})[wk] || {}, mat = wkData.mat || {};
+    var rows = [], merges = [], missing = [];
+    var T = function (v, o) { return Object.assign({ v: v }, o || {}); };
+    rows.push([T('SEN Material Instructions ' + String.fromCharCode(8212) + ' WC ' + senFmt(wk, true) + ' (NFL ' + senGameLabel(i) + ')', { b: true })]);
+    rows.push([T(SEN_PLAN.title + ' · Mon ' + senFmt(wk) + ' – Sun ' + senFmt(senAddDays(wk, 6)))]);
+    rows.push([]);
+    rows.push(['PROGRAM', 'WHEN', 'STATIONS', 'ENTITLEMENT', 'LENGTH', 'QTY', 'KEY / WORDING', 'SHARE'].map(function (t) { return T(t, { b: true, fill: PAPER, box: true }); }));
+    var progRows = [];
+    run.forEach(function (r) {
+      var e = r.ent, m = mat[e.id] || {}, lines = [];
+      if (e.type === 'spots' || (e.type === 'update' && m.mode !== 'live')) {
+        senShares(m.keys).forEach(function (x) {
+          var t = senKeyTitle(creatives, x.k);
+          lines.push([T(x.k + (t ? ' (' + t + ')' : ''), { b: true, box: true, wrap: true }), T(x.s + '%', { b: true, box: true, align: 'center' })]);
+        });
+      } else if (e.type === 'update') {
+        if (String(m.text || '').trim()) lines.push([T('Live read: ' + m.text.trim(), { box: true, wrap: true }), T('', { box: true })]);
+      } else if (String(m.text || '').trim()) {
+        var txt = m.text.trim() + (e.type === 'words' ? ' (' + senWords(m.text) + ' words)' : '');
+        lines.push([T(txt, { box: true, wrap: true }), T('', { box: true })]);
+      }
+      if (!lines.length) { missing.push(r.prog.name + ': ' + e.name); lines.push([T('TBC', { b: true, color: 'C00000', box: true }), T('', { box: true })]); }
+      var first = rows.length, last = progRows[progRows.length - 1], sameProg = last && last.id === r.prog.id;
+      lines.forEach(function (ln, li) {
+        var progCells = li === 0 && !sameProg ? [T(r.prog.name, { b: true, box: true, wrap: true }), T(r.prog.when, { box: true, wrap: true }), T(r.prog.stations, { box: true, wrap: true })]
+          : [T('', { box: true }), T('', { box: true }), T('', { box: true })];
+        var entCells = li === 0 ? [T(e.name, { box: true, wrap: true }), T(e.len, { box: true, align: 'center' }), T(r.qty, { box: true, align: 'center' })]
+          : [T('', { box: true }), T('', { box: true }), T('', { box: true })];
+        rows.push(progCells.concat(entCells, ln));
+      });
+      if (lines.length > 1) for (var c = 3; c < 6; c++) merges.push({ s: { r: first, c: c }, e: { r: first + lines.length - 1, c: c } });
+      if (sameProg) last.end = rows.length - 1; else progRows.push({ id: r.prog.id, start: first, end: rows.length - 1 });
+    });
+    // a program's name, times and stations span all its entitlement rows
+    progRows.forEach(function (g) { if (g.end > g.start) for (var c = 0; c < 3; c++) merges.push({ s: { r: g.start, c: c }, e: { r: g.end, c: c } }); });
+    if (String(wkData.note || '').trim()) { rows.push([]); rows.push([T('Notes', { b: true }), T(wkData.note.trim(), { wrap: true })]); merges.push({ s: { r: rows.length - 1, c: 1 }, e: { r: rows.length - 1, c: 7 } }); }
+    var ws = XLSX.utils.aoa_to_sheet(rows.map(function (r) { return r.map(function (c) { return c && typeof c === 'object' ? (c.v == null ? '' : c.v) : (c == null ? '' : c); }); }));
+    rows.forEach(function (r, ri) {
+      r.forEach(function (c, ci) {
+        var a = XLSX.utils.encode_cell({ r: ri, c: ci });
+        if (!ws[a]) ws[a] = { t: 's', v: '' };
+        var o = c && typeof c === 'object' ? c : {};
+        if (hasStyles) ws[a].s = { font: { name: 'Calibri', sz: 11, bold: !!o.b, color: { rgb: o.color || INK } }, fill: o.fill ? { patternType: 'solid', fgColor: { rgb: o.fill } } : undefined, border: o.box ? box : undefined, alignment: { vertical: 'top', horizontal: o.align, wrapText: !!o.wrap } };
+      });
+    });
+    ws['!cols'] = [30, 24, 40, 30, 9, 6, 52, 8].map(function (w) { return { wch: w }; });
+    ws['!merges'] = merges;
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'SEN MI');
+    var name = 'SEN MI WC' + wk + '.xlsx';
+    var out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    var url = URL.createObjectURL(new Blob([out], { type: 'application/octet-stream' }));
+    var a2 = document.createElement('a'); a2.href = url; a2.download = name;
+    document.body.appendChild(a2); a2.click(); document.body.removeChild(a2);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 150);
+    zap(missing.length ? '✓ SEN MI exported · ⚠ still TBC: ' + missing.join('; ') : '✓ SEN MI exported');
+  } catch (e) { zap('⚠ Export failed: ' + (e && e.message ? e.message : e)); }
+}
+
+function SENTab(props) {
+  var h = React.createElement;
+  var sen = props.sen || { weeks: {} }, setSen = props.setSen, creatives = props.creatives || [], zap = props.zap, getXLSX = props.getXLSX;
+  var t = new Date(), todayISO = t.getFullYear() + '-' + ('0' + (t.getMonth() + 1)).slice(-2) + '-' + ('0' + t.getDate()).slice(-2);
+  var stWk = React.useState(senAddDays(senMonday(todayISO), 7)), wk = stWk[0], setWk = stWk[1];
+  var nWeeks = Object.keys(sen.weeks || {}).length;
+  React.useEffect(function () {
+    var c = senCarry(sen, wk);
+    if (c && senRunning(wk).length) setSen(function (p) { var w = Object.assign({}, (p || {}).weeks || {}); if (w[wk]) return p; w[wk] = c; return Object.assign({}, p, { weeks: w }); });
+  }, [wk, nWeeks]);
+  var card = { background: '#fff', borderRadius: 12, padding: '14px 16px', marginBottom: 14, boxShadow: '0 1px 4px rgba(17,24,39,.07)' };
+  var lab = { fontSize: 11, fontWeight: 800, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '.05em' };
+  var inp = { border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 7px', fontSize: 12, fontFamily: 'inherit' };
+  var link = { border: 'none', background: 'none', color: '#2563eb', fontSize: 11, cursor: 'pointer', padding: '2px 0' };
+  var idx = senWeekIndex(wk), run = senRunning(wk);
+  var wkData = (sen.weeks || {})[wk] || {}, mat = wkData.mat || {};
+  var senKeys = creatives.filter(function (c) { return c.nets && c.nets.sen; });
+
+  function upd(fn) { setSen(function (p) { var n = JSON.parse(JSON.stringify(p || { weeks: {} })); n.weeks = n.weeks || {}; n.weeks[wk] = n.weeks[wk] || { mat: {}, note: '' }; n.weeks[wk].mat = n.weeks[wk].mat || {}; fn(n.weeks[wk]); return n; }); }
+  function setMat(id, m) { upd(function (w) { w.mat[id] = m; }); }
+  function evenSplit(n) { var out = [], base = Math.floor(100 / n / 5) * 5; for (var i = 0; i < n; i++) out.push(base); out[0] += 100 - base * n; return out; }
+
+  function keysEditor(m, onChange) {
+    var list = m.keys && m.keys.length ? m.keys : [{ k: '', s: 100 }];
+    var total = list.reduce(function (s, x) { return s + (parseFloat(x.s) || 0); }, 0);
+    return h('div', null,
+      list.map(function (x, i) {
+        var title = senKeyTitle(creatives, x.k);
+        return h('div', { key: i, style: { display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4, flexWrap: 'wrap' } },
+          h('input', { list: 'sen-keys', value: x.k, placeholder: 'key number', onChange: function (e) { var l = JSON.parse(JSON.stringify(list)); l[i].k = e.target.value; onChange(Object.assign({}, m, { keys: l })); }, style: Object.assign({}, inp, { width: 170, fontFamily: 'ui-monospace,Menlo,monospace' }) }),
+          list.length > 1 ? h('input', { type: 'number', min: 0, max: 100, step: 5, value: x.s, onChange: function (e) { var l = JSON.parse(JSON.stringify(list)); l[i].s = e.target.value === '' ? '' : Number(e.target.value); onChange(Object.assign({}, m, { keys: l })); }, style: Object.assign({}, inp, { width: 50 }) }) : null,
+          list.length > 1 ? h('span', { style: { fontSize: 11, color: '#6b7280' } }, '%') : null,
+          h('span', { style: { fontSize: 11, color: title ? '#374151' : '#9ca3af' } }, title || (x.k ? 'not in the Creative Library' : '')),
+          list.length > 1 ? h('button', { style: Object.assign({}, link, { color: '#9ca3af' }), onClick: function () { var l = list.filter(function (_, j) { return j !== i; }); if (l.length === 1) l[0].s = 100; onChange(Object.assign({}, m, { keys: l })); } }, '×') : null);
+      }),
+      h('div', { style: { display: 'flex', gap: 10, alignItems: 'center' } },
+        h('button', { style: link, onClick: function () { var l = JSON.parse(JSON.stringify(list)).concat([{ k: '', s: 0 }]); var sp = evenSplit(l.length); l.forEach(function (y, j) { y.s = sp[j]; }); onChange(Object.assign({}, m, { keys: l })); } }, '+ add key'),
+        list.length > 1 && total !== 100 ? h('span', { style: { fontSize: 11, color: '#b91c1c', fontWeight: 700 } }, total + '%') : null));
+  }
+  function textEditor(m, onChange, placeholder, limit) {
+    var n = senWords(m.text);
+    return h('div', null,
+      h('textarea', { value: m.text || '', placeholder: placeholder, rows: 2, onChange: function (e) { onChange(Object.assign({}, m, { text: e.target.value })); }, style: Object.assign({}, inp, { width: '100%', boxSizing: 'border-box', resize: 'vertical', lineHeight: 1.4 }) }),
+      limit ? h('div', { style: { fontSize: 11, color: n > limit ? '#b91c1c' : '#6b7280', fontWeight: n > limit ? 700 : 400 } }, n + ' / ' + limit + ' words' + (n > limit ? ', too long' : '')) : null);
+  }
+  function editor(r) {
+    var e = r.ent, m = mat[e.id] || {}, set = function (v) { setMat(e.id, v); };
+    if (e.type === 'spots') return keysEditor(m, set);
+    if (e.type === 'words') return textEditor(m, set, 'Wording to read, ' + e.limit + ' words max', e.limit);
+    if (e.type === 'brief') return textEditor(m, set, 'Topic or brief for the segment');
+    if (e.type === 'note') return h('input', { value: m.text || '', placeholder: 'Post or asset to share', onChange: function (ev) { set(Object.assign({}, m, { text: ev.target.value })); }, style: Object.assign({}, inp, { width: '100%', boxSizing: 'border-box' }) });
+    if (e.type === 'update') {
+      var mode = m.mode === 'live' ? 'live' : 'pre';
+      return h('div', null,
+        h('div', { style: { display: 'flex', gap: 6, marginBottom: 6 } }, [['pre', 'Pre-recorded'], ['live', 'Live read']].map(function (o) {
+          var on = mode === o[0];
+          return h('button', { key: o[0], onClick: function () { set(Object.assign({}, m, { mode: o[0] })); }, style: { border: '1px solid ' + (on ? '#111827' : '#d1d5db'), background: on ? '#111827' : '#fff', color: on ? '#fff' : '#374151', borderRadius: 14, padding: '3px 10px', fontSize: 11, fontWeight: 700, cursor: 'pointer' } }, o[1]);
+        })),
+        mode === 'pre' ? keysEditor(m, set) : textEditor(m, set, 'Script or talking points for the live read'));
+    }
+    return h('span', { style: { fontSize: 12, color: '#6b7280' } }, 'Nothing to supply');
+  }
+
+  // header
+  var header = h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, flexWrap: 'wrap' } },
+    h('span', { style: { fontSize: 15, fontWeight: 800, color: '#111827' } }, 'SEN'),
+    h('span', { style: { fontSize: 11, color: '#9ca3af' } }, SEN_PLAN.title + ' · $' + (SEN_PLAN.investment / 1000) + 'k for $' + Math.round(SEN_PLAN.casualValue / 1000) + 'k casual value'),
+    h('span', { style: { marginLeft: 16, fontSize: 13, fontWeight: 600 } }, 'Week commencing'),
+    h('button', { onClick: function () { setWk(senAddDays(wk, -7)); }, style: Object.assign({}, inp, { cursor: 'pointer' }) }, '‹'),
+    h('input', { type: 'date', value: wk, onChange: function (e) { if (e.target.value) setWk(senMonday(e.target.value)); }, style: Object.assign({}, inp, { padding: '5px 8px', fontSize: 13 }) }),
+    h('button', { onClick: function () { setWk(senAddDays(wk, 7)); }, style: Object.assign({}, inp, { cursor: 'pointer' }) }, '›'),
+    h('span', { style: { fontSize: 12, fontWeight: 800, color: '#fff', background: '#111827', borderRadius: 12, padding: '3px 10px' } }, 'NFL ' + senGameLabel(idx)),
+    h('button', { onClick: function () { senExport(sen, wk, creatives, getXLSX(), zap); }, style: { marginLeft: 'auto', background: '#1d6f42', color: '#fff', border: 'none', borderRadius: 9, padding: '8px 16px', fontSize: 13, fontWeight: 800, cursor: 'pointer' } }, '↓ Export SEN MI'));
+
+  // season strip
+  var fills = { done: ['#dcfce7', '#166534'], part: ['#fef3c7', '#92400e'], todo: ['#fff', '#374151'], none: ['#f3f4f6', '#9ca3af'] };
+  var strip = h('div', { style: card },
+    h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 8 } }, h('span', { style: lab }, 'Season'),
+      h('span', { style: { fontSize: 11, color: '#6b7280' } }, 'Green: all material in. Amber: some missing. Click a week to open it.')),
+    h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap' } }, SEN_GAME_WEEKS.map(function (g, i) {
+      var w = senWeekISO(i), st = senStatus(sen, w), f = fills[st], sel = w === wk, past = senAddDays(w, 6) < todayISO;
+      return h('button', { key: w, onClick: function () { setWk(w); }, title: senGameLabel(i) + ' · wc ' + senFmt(w, true),
+        style: { width: 44, padding: '4px 0', borderRadius: 7, cursor: 'pointer', border: sel ? '2px solid #EE1A42' : '1px solid #e5e7eb', background: f[0], color: f[1], opacity: past && !sel ? 0.55 : 1, lineHeight: 1.2 } },
+        h('div', { style: { fontSize: 12, fontWeight: 800 } }, g || '–'), h('div', { style: { fontSize: 9 } }, senFmt(w)));
+    })));
+
+  // this week's entitlements
+  var dl = h('datalist', { id: 'sen-keys' }, senKeys.map(function (c) { return h('option', { key: c.id, value: c.keyNumber }, c.title); }));
+  var body;
+  if (!run.length) {
+    body = h('div', { style: Object.assign({}, card, { textAlign: 'center', color: '#6b7280', fontSize: 13, padding: '30px 20px' }) },
+      idx < 0 || idx >= SEN_GAME_WEEKS.length ? 'This week is outside the SEN NFL plan (wc 07/09/26 to wc 22/02/27).' : 'Nothing booked on SEN this week (' + senGameLabel(idx) + ').');
+  } else {
+    var progs = [];
+    run.forEach(function (r) { var g = progs.find(function (x) { return x.prog.id === r.prog.id; }); if (g) g.rows.push(r); else progs.push({ prog: r.prog, rows: [r] }); });
+    body = h('div', null, dl, progs.map(function (g) {
+      return h('div', { key: g.prog.id, style: card },
+        h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 8 } },
+          h('span', { style: { fontSize: 14, fontWeight: 800, color: '#111827' } }, g.prog.name),
+          h('span', { style: { fontSize: 12, color: '#374151' } }, g.prog.when),
+          g.prog.stations ? h('span', { style: { fontSize: 11, color: '#9ca3af' } }, g.prog.stations) : null),
+        g.rows.map(function (r) {
+          var ok = r.ent.type === 'info' || senHasMaterial(r.ent, mat[r.ent.id]);
+          return h('div', { key: r.ent.id, style: { display: 'flex', gap: 16, padding: '8px 0', borderTop: '1px solid #f1f5f9', alignItems: 'flex-start', flexWrap: 'wrap' } },
+            h('div', { style: { width: 260, flex: '0 0 260px' } },
+              h('div', { style: { fontSize: 13, fontWeight: 700, color: '#111827' } }, r.ent.name),
+              h('div', { style: { fontSize: 11, color: '#6b7280' } }, [r.ent.len, r.qty + ' this week'].filter(Boolean).join(' · ')),
+              !ok ? h('div', { style: { fontSize: 11, color: '#b45309', fontWeight: 700, marginTop: 2 } }, 'Needs material') : null),
+            h('div', { style: { flex: '1 1 340px', minWidth: 260 } }, editor(r)));
+        }));
+    }),
+    h('div', { style: card }, h('div', { style: Object.assign({}, lab, { marginBottom: 6 }) }, 'Notes for SEN this week'),
+      h('textarea', { value: wkData.note || '', rows: 2, placeholder: 'Anything else SEN needs to know (goes at the bottom of the MI)', onChange: function (e) { var v = e.target.value; upd(function (w) { w.note = v; }); }, style: Object.assign({}, inp, { width: '100%', boxSizing: 'border-box', resize: 'vertical' }) })));
+  }
+  return h('div', null, header, strip, body);
+}
+
+// Partner logos for the nav, one colour only: black, flipped to white on the active tab.
+var NAV_LOGOS = {
+  tapt: { src: 'data:image/png;base64,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', h: 20 },
+  sen: { src: 'data:image/png;base64,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', h: 20 },
+  qms: { src: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGcAAAAoCAYAAADjT+RAAAAJT0lEQVR42u2ba4xdVRXHf+fc23YGWxEUSxRTCz4wihGVxpYoohQsmiYgKX4AE7UQ0IikEaNYFR/gi2AaJZUGEUdMxCcKSqxSQS0tGoMPtNZGaC1UXhYKwnTmzj3HD/0vXa7sc+65M0MZyT3Jzrn3nn3W3nv913vvC/vnyoGW+34w8FZgLXAb8DBwpp61GVz7jREtoKvPRwMrgeXAYQP2P3lX5rTlCOAaoABKtQKYAMb0eaA502yqshpg7Nm5MlsGSieA1NF9AM40mqo60ABmA1cnQIjNg5MBs2pAf6pYlOyJ8DlGuAscKZN0l34r3f0A4DpgqUxXq2KsrnvuwfJmsXQ+q19zGq9CbSomul+auZqto6x4VoRnfZsxu84DHpdjN03KHAjrNdB4hbZMBNNWAu9UFHcoMNyntvbL6P3tc/01DAzVKEvWr+bkYuawTNUK/T4amDcBXCmN6chE+cskxCa9CfgRcLOiuEv1/HFgB7AZuAG4RVKXOzCr5vgiYJXTZFz/S4G/ub5NgZwFfAp4uqNr6/gB8ONAM3OashA4FXg9cLij8SiwE7gd2AD8QpYoRri1Tt5M2dOAn4vwXk3kJPWZo/vbazTGa8p64LgwzjUVWlYKxOUVWhw16401dG6X1LYaapAJ7xU1NC8OfTPHk88JhLJB2wpcAMztpe5ZUM1MEmyMn9DnkxyzDgV2C/FuGLjrQD03jGPM+roAHHe+qBNoXe0mn1eA8zq9N6a7tb2ORhOrYc9X6r1Ib1T3C4NJyqUdtwQ/OuF4061Z41bgRG8SbaELgI87bbEOnwwaEcEB+HJFVGYO82GptjGyFZgw4sApEuDamLcBhyQAMnrHBYFIRYbv6QGQ0Xq1QEn5SKO12tGy+XzfAVo4PnRC64Y1et4dhUN7GNgCbHShMMCr3ItFAGeZ+rxQktmtSDTHHTCzKiT0G4mgITLYhOPXigi9eWoCTuGkdXFFoGER1EHAnQ2AXh1M+8k9gqEyIXjdwNd1QJ47R/Ylhcf3Bif6eeeLsuDcjdFna3JF6GNO8/1y+rNcqByvx4D7gF0uvM6DY7T3jwEud0FCv6lAG7hWGlg4Gpnjx4iceb9jnFURjDwEfFFau0qB0zYnDB3dt7uABoATHIrXu4GWVEiOIbxYBHck+lmfWxva+HnyJ/OkiSvlwFPjm9QuTZjJOs2Jc1sf/IXN8aIeiXNKc3JZm+1ufDPpjwGLEmueo0hus6N7vNfoTKbMHnpwrnK2Mi5sRH2OrWCGfT9hCnlKW5rrx/V50mYn7b3AqfIZn9Z7lnu8paLM1MvnADxTGmL9bQ5/d5o/LBDbQaNXA5dEXh3rbHGpqAxJ8T1hoSYJ/wTmq9+FCSmz/nf0qMGlTI4x2ydklyUAsjEWBR/ZRHMig09zvjMVcRYNNAfgGcCD4R2jdU6F8M2uippz4HRXkvER0MuA52iA3JVbMuUk97ltgFRJA+CHIemsu1KO2yLGC4A/63MRxjilR+ZvtvsfjraPykrgq8BrFGYfFNZs/mNXAy1/xIFThgBjrfzuOUqUccGSmbiW9zU58NpEbmPgEByyDxWt3+GJsNaebQwM6vcqnOCsCaDYGIvD76n6HcC3lCbkYoqnMRf4pfOxrSCMPwE+nOBHBKfQmrPEfEpp9Vrgj8BvgS8Ab1LkOSba/5PfLKyQvAUJ4rmc21/0fY7sbCpPKFUUnQo4HqANYmo7REMLZMsnetCZK3A2iUY3lFoiXYviHgLO0Lrr1mK/r3F0ukFgzcTNBl4JnA/cKPN/sSzVfwCybDYFzoEVg+8G9jhVHArvW7+9rl8/oW4emvmh+zV21M55Ki2VDcxOprrgvRW1sCzUADNtZTzo+ESNhraAPwDvdRGkT2BbTnAL92yhfPfvgXcYrZyZdfmgo3ART+GKglPRwBK4G3hbokyfBUa3gQ+pMJvV5GcpgC6XEGx3lYMsJNa5e2ZAPUsR8vuAbi4nllLXPRVRxMFOq8akISQWOZTQvl7V30OA5wHPZd8Zg8Pc90UaO2ryozI5TbcChlT3WhXMG85Jt4HvAJ+RdejHLBtA3wZeIS3a5Oi2HCARKPvtMuCYvMYv7EgwsJAJOVLfxxRWpyaY1fizKnCeL/u7Ve2vatuAm0Llt3Tz7PSx/WFMWqNia9v5K9OYLTIv+SQ358yv7FHlZQnwcuDdAu1ul5tliYArBz6YK0rx4Nj9jkTy6MNX63dnIloqXQ7VBBwLt38DfEACMOQ2poYr9oZwFYh8EtJ9NvA7B1AmLTwN+FcQgn5957jmZNvuWxSprQBeosrziOObD71Li6JnUhJqAKwLWXpRUalukoTavK4KZSQD8wWKyKzfitCvHfaqOjVVaU/3+BCMtNzdX6e4bZKY683Y8s2NNZm+zaFJ+aYKHP/5zerz2Zo+TcBpu0JwqUr7/JBitCWEQ06gdibWWszEwueB7Dvn9tHgNCPwe7WxlvUofNaB4yX9VDEsanpTcGzL4A1h/2mX8plnV6x7WdAcsxD3e4n+in78bth32VBTeFzuthVSVVx757yKvRy/+HXKP+4JY5UVm3ePyCQxBc2hgb9qCk4moXrACZVfxwOqrHxMu8HnA19zO7RF4O0NM3mzrdtjg8p82gEuFJ0sONScK+gFzkdciP4ntx0feVA2bEZ3We6ihFHVeX7mkq6WakCXhJAzRm/bVDTMEyULY9x1AqgTzJCPoPzk8vCsGyKaLvBSbVoV03B0qjvJyKx071+kasIcpz2E83cTofkoeVy8+qZ87ow/4JHaR/GHLEpl1FQc8LCDGFdO8iCl9T8z0IsHPGa5QvD3Eua91yEP63uTfG8+XUejZj/BR6N+JVDrjhmdLjonVjy/dorgnNXgaJTX3qXaMhltaM52A59wIGftCjNVVY0+ORwqLEJmPSLJfVfiUGHmQFqq5g8VdpRv2LauHSq83iXKOxSE+H1/+3yUsu+7+O85s8w9v7XH1kJdgozK/Fc4emZKN4ZjuTavn6odoQhuCfBiRW1D0pjdqoDcLCB3JSogzKTjuPMrjqu2/w8P++cV6xh2oXeToKSvkj6qry1M+KhMEdT6ir34CNKonp+RGCuaipZL9mJrhfdiy6fh7PNk6Oaub1YBSHs6z3AP/gIy9b+AZIM/Tw2uwd8OeQr8C+5o9u0S7kyYtwE4PHn/Hx381b3P699uWwzRMUdcMgAAAABJRU5ErkJggg==', h: 16 },
+  rdc: { src: 'data:image/png;base64,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', h: 20 },
+  fox: { src: 'data:image/png;base64,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', h: 22 },
+  espn: { src: 'data:image/png;base64,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', h: 12 },
+  seven: { src: 'data:image/png;base64,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', h: 22 },
+};
+var NAV_TABS = [
+  { k: 'library', label: 'Creative Library', icon: 'library' },
+  { k: 'foxfooty', label: 'Fox Footy', logo: 'fox' },
+  { k: 'ussports', label: 'ESPN', logo: 'espn' },
+  { k: 'rdcmi', label: 'RDC', logo: 'rdc' },
+  { k: 'sen', label: 'SEN', logo: 'sen' },
+  // Tapt Media (formerly Nine Radio) has nothing running, so its tab is hidden until it does.
+  { k: 'tapt', label: 'Tapt Media', logo: 'tapt', hidden: true },
+  { k: 'outdoor', label: 'Large Format', logo: 'qms' },
+  { k: 'seven', label: '7-Eleven', logo: 'seven' }
+];
+function navIcon(item, active) {
+  var h = React.createElement;
+  if (item.logo && NAV_LOGOS[item.logo]) {
+    var l = NAV_LOGOS[item.logo];
+    return h('img', { src: l.src, alt: '', style: { height: l.h, width: 'auto', display: 'block', filter: active ? 'invert(1)' : 'none' } });
+  }
+  var c = active ? '#fff' : '#000';
+  return h('svg', { width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none', stroke: c, strokeWidth: 1.6, strokeLinecap: 'round', style: { display: 'block' } },
+    h('rect', { x: 2, y: 3.5, width: 12, height: 9.5, rx: 1.5 }), h('path', { d: 'M2 6.5h12M5.5 3.5l1 3M9 3.5l1 3' }));
+}
+
 function App() {
   var stTab = useState('library'),
     tab = stTab[0],
@@ -3453,6 +3768,7 @@ function App() {
     setPlanNet = stPN[1];
   useEffect(function () {
     if (tab === 'foxfooty') { if (platform !== 'tv') setPlatform('tv'); if (planNet !== 'fox') setPlanNet('fox'); }
+    else if (tab === 'tapt') { if (platform !== 'radio') setPlatform('radio'); if (planNet !== 'nine') setPlanNet('nine'); }
     else if (tab === 'radio') { if (platform !== 'radio') setPlatform('radio'); if (['nine', 'sen', 'triplem'].indexOf(planNet) < 0) setPlanNet('nine'); }
   }, [tab]);
   var stON = useState('fox'),
@@ -3522,6 +3838,9 @@ function App() {
   var stTcn = useState(JSON.parse(JSON.stringify(TCN_DEFAULT))),
     tcn = stTcn[0],
     setTcn = stTcn[1];
+  var stSen = useState({ weeks: {} }),
+    sen = stSen[0],
+    setSen = stSen[1];
   var stViewSnap = useState(null),
     viewSnap = stViewSnap[0],
     setViewSnap = stViewSnap[1];
@@ -3681,6 +4000,7 @@ function App() {
           var rUS3 = await window.storage.get('mi2_ussplit').catch(function(){return null;}); if(rUS3&&rUS3.value){try{setUsSplit(JSON.parse(rUS3.value));}catch(e){}}
           var rLF = await window.storage.get('mi2_lf').catch(function(){return null;}); if(rLF&&rLF.value){try{setLfCamps(JSON.parse(rLF.value));}catch(e){}}
           var rTC = await window.storage.get('mi2_tcn').catch(function(){return null;}); if(rTC&&rTC.value){try{setTcn(JSON.parse(rTC.value));}catch(e){}}
+          var rSN = await window.storage.get('mi2_sen').catch(function(){return null;}); if(rSN&&rSN.value){try{setSen(JSON.parse(rSN.value));}catch(e){}}
           var r7 = await window.storage.get('mi_rdcmi').catch(function () {
             return null;
           });
@@ -3745,6 +4065,9 @@ function App() {
   useEffect(function () {
     if (loaded) window.storage.set('mi2_tcn', JSON.stringify(tcn)).catch(function () {});
   }, [tcn, loaded]);
+  useEffect(function () {
+    if (loaded) window.storage.set('mi2_sen', JSON.stringify(sen)).catch(function () {});
+  }, [sen, loaded]);
   useEffect(function () {
     if (loaded) window.storage.set('mi_emails2', JSON.stringify(emailConfig)).catch(function () {});
   }, [emailConfig, loaded]);
@@ -5128,7 +5451,7 @@ function App() {
   }, {
     k: 'nine',
     net: 'nine',
-    label: 'Nine Radio',
+    label: 'Tapt Media',
     defOff: 2
   }, {
     k: 'sen',
@@ -5311,6 +5634,7 @@ function App() {
       snaps: snaps,
       lf: lfCamps,
       tcn: tcn,
+      sen: sen,
       wc: wc,
       platform: platform
     };
@@ -5349,6 +5673,7 @@ function App() {
         if (d.usSplit) setUsSplit(d.usSplit);
         if (d.lf) setLfCamps(d.lf);
         if (d.tcn) setTcn(d.tcn);
+        if (d.sen) setSen(d.sen);
         if (d.wc) setWC(snapToSunday(d.wc));
         if (d.platform) setPlatform(d.platform);
         zap('\u2713 Backup restored');
@@ -5372,7 +5697,8 @@ function App() {
       usOn: usOn,
       usSplit: usSplit,
       lf: lfCamps,
-      tcn: tcn
+      tcn: tcn,
+      sen: sen
     };
   }
   function crePayload() {
@@ -5395,6 +5721,7 @@ function App() {
     if (d.usSplit && Object.keys(d.usSplit).length) setUsSplit(d.usSplit);
     if (d.lf && d.lf.length) setLfCamps(d.lf);
     if (d.tcn && d.tcn.windows && Object.keys(d.tcn.weeks || {}).length) setTcn(d.tcn);
+    if (d.sen && Object.keys(d.sen.weeks || {}).length) setSen(d.sen);
     if (d.sentMap) setSentMap(d.sentMap);
     if (d.dueOv) setDueOv(d.dueOv);
     if (d.emails) setEmailConfig(Object.assign({}, DEFAULT_EMAILS, d.emails));
@@ -5511,7 +5838,7 @@ function App() {
     return function () {
       if (syncRef.current.mainTimer) clearTimeout(syncRef.current.mainTimer);
     };
-  }, [allRots, allNotes, rdcMI, usMI, usOn, usSplit, lfCamps, tcn, sentMap, dueOv, emailConfig, snaps, loaded]);
+  }, [allRots, allNotes, rdcMI, usMI, usOn, usSplit, lfCamps, tcn, sen, sentMap, dueOv, emailConfig, snaps, loaded]);
   // Debounced push — creatives (separate channel so agency key-adds can't collide with rotation edits)
   useEffect(function () {
     if (!loaded || !syncRef.current.ready) return;
@@ -5769,7 +6096,7 @@ function App() {
       color: '#9aa0b5',
       marginTop: 3
     }
-  }, "Material Instructions · TV · Radio · RDC · Large Format · 7-Eleven · ", creatives.length, " creatives")), flash && /*#__PURE__*/React.createElement("div", {
+  }, "Material Instructions · TV · Radio · Outdoor · ", creatives.length, " creatives")), flash && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 12,
       color: '#0c0e1a',
@@ -5791,7 +6118,8 @@ function App() {
       padding: '8px 10px',
       boxShadow: '0 1px 4px rgba(17,24,39,.07)'
     }
-  }, [['library', '🎬 Creative Library'], ['foxfooty', '🏈 Fox Footy'], ['ussports', '🏈 ESPN'], ['rdcmi', '📡 RDC'], ['radio', '📻 Radio'], ['outdoor', '🪧 Large Format'], ['seven', '🏪 7-Eleven']].map(function (item) {
+  }, NAV_TABS.filter(function (t) { return !t.hidden || tab === t.k; }).map(function (t) {
+    var item = [t.k, t.label];
     return /*#__PURE__*/React.createElement("button", {
       key: item[0],
       onClick: function () {
@@ -5806,9 +6134,12 @@ function App() {
         background: tab === item[0] ? 'linear-gradient(90deg,#EE1A42,#c8123a)' : 'transparent',
         borderRadius: 9,
         fontSize: 13,
-        boxShadow: tab === item[0] ? '0 3px 10px rgba(238,26,66,.30)' : 'none'
+        boxShadow: tab === item[0] ? '0 3px 10px rgba(238,26,66,.30)' : 'none',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 7
       }
-    }, item[1]);
+    }, navIcon(t, tab === item[0]), item[1]);
   }), /*#__PURE__*/React.createElement("span", {
     style: {
       marginLeft: 'auto',
@@ -5864,6 +6195,8 @@ function App() {
     usPct: usPct, setUsPctWithPair: setUsPctWithPair, usPoolTotal: usPoolTotal,
     usCopyBucket: usCopyBucket, usCopyDay: usCopyDay, usCopySection: usCopySection,
     usCreativesFor: usCreativesFor, exportUsXLSX: exportUsXLSX
+  }), tab === 'sen' && /*#__PURE__*/React.createElement(SENTab, {
+    sen: sen, setSen: setSen, creatives: creatives, zap: zap, getXLSX: getXLSX
   }), tab === 'outdoor' && /*#__PURE__*/React.createElement(LargeFormat, {
     camps: lfCamps, setCamps: setLfCamps, zap: zap, getXLSX: getXLSX
   }), tab === 'seven' && /*#__PURE__*/React.createElement(SevenEleven, {
@@ -6195,7 +6528,7 @@ function App() {
       color: '#9ca3af',
       marginTop: 10
     }
-  }, "Sent status is tracked per week — change the WC date above to see another week's run sheet. Due dates default to the usual lead times (RDC Sun–Tue earlier per Racing.com's split delivery); adjust \"days before WC\" if a network changes its deadline.")), (tab === 'foxfooty' || tab === 'radio') && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(PlatformTabHeader, {
+  }, "Sent status is tracked per week — change the WC date above to see another week's run sheet. Due dates default to the usual lead times (RDC Sun–Tue earlier per Racing.com's split delivery); adjust \"days before WC\" if a network changes its deadline.")), (tab === 'foxfooty' || tab === 'radio' || tab === 'tapt') && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(PlatformTabHeader, {
     tab: tab, planNet: planNet, setPlanNet: setPlanNet
   }), planNet === 'fox' ? /*#__PURE__*/React.createElement("div", {
     style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, padding: '10px 14px', backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 8, flexWrap: 'wrap' }
