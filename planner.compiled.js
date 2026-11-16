@@ -3061,14 +3061,37 @@ function tcnMonday(iso) {
 }
 function tcnAddDays(iso, n) { var d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
 function tcnCell(tcn, wk, d, wid) { return (((tcn.weeks || {})[wk] || {})[d] || {})[wid] || {}; }
+// Slots hold uploaded creatives by id ({id, s}). Older entries typed a name ({c, s}); those match an
+// uploaded creative with the same name, otherwise they show as not uploaded.
+function tcnAsset(tcn, x) {
+  var lib = tcn.library || [];
+  if (!x) return null;
+  if (x.id) return lib.find(function (a) { return a.id === x.id; }) || null;
+  var n = String(x.c || '').trim().toLowerCase();
+  return n ? lib.find(function (a) { return String(a.name || '').trim().toLowerCase() === n; }) || null : null;
+}
+function tcnKeyOf(tcn, x) {
+  var a = tcnAsset(tcn, x);
+  return a ? 'a:' + a.id : x.id ? 'gone:' + x.id : 'n:' + String(x.c || '').trim();
+}
+// Name, QMS file name and any problem for a rotation key.
+function tcnInfo(tcn, key) {
+  if (key.indexOf('a:') === 0) {
+    var a = (tcn.library || []).find(function (x) { return 'a:' + x.id === key; });
+    if (a) return { asset: a, name: a.name, file: tcnFile(tcn, a), problem: (a.issues || []).length ? a.name + ': ' + a.issues.join(', ') : '' };
+  }
+  if (key.indexOf('gone:') === 0 || key.indexOf('a:') === 0) return { asset: null, name: 'Removed creative', file: 'TBC', problem: 'a slot uses a creative that has been removed' };
+  var n = key.slice(2);
+  return { asset: null, name: n, file: tcnFile(tcn, n), problem: n + ' has not been uploaded' };
+}
 // Rotation running in one market: its own entries if it has an override, otherwise the all-markets ones.
 function tcnRot(tcn, wk, d, wid, mkt) {
   var c = tcnCell(tcn, wk, d, wid);
   var e = (mkt && c[mkt]) ? c[mkt] : (c.ALL || []);
-  return e.filter(function (x) { return String(x.c || '').trim() && (parseFloat(x.s) || 0) > 0; });
+  return e.filter(function (x) { return (x.id || String(x.c || '').trim()) && (parseFloat(x.s) || 0) > 0; });
 }
-function tcnSig(entries) {
-  return entries.map(function (x) { return String(x.c).trim() + ':' + (parseFloat(x.s) || 0); }).sort().join('|');
+function tcnSig(tcn, entries) {
+  return entries.map(function (x) { return tcnKeyOf(tcn, x) + ':' + (parseFloat(x.s) || 0); }).sort().join('|');
 }
 function tcnWindowsSorted(tcn) {
   return (tcn.windows || []).slice().sort(function (a, b) {
@@ -3077,7 +3100,7 @@ function tcnWindowsSorted(tcn) {
   });
 }
 // Columns for the grid and MI: per window, back-to-back days with identical rotations in every market
-// share a column; markets only split out where their rotation differs.
+// share a column; markets only split out where their rotation differs. rot is keyed by tcnKeyOf.
 function tcnColumns(tcn, wk) {
   var cols = [], gaps = [];
   tcnWindowsSorted(tcn).forEach(function (w) {
@@ -3085,7 +3108,7 @@ function tcnColumns(tcn, wk) {
     var runs = [];
     days.forEach(function (d) {
       var map = {};
-      tcn.markets.forEach(function (m) { map[m] = tcnSig(tcnRot(tcn, wk, d, w.id, m)); });
+      tcn.markets.forEach(function (m) { map[m] = tcnSig(tcn, tcnRot(tcn, wk, d, w.id, m)); });
       var key = JSON.stringify(map), last = runs[runs.length - 1];
       if (last && last.key === key && last.days[last.days.length - 1] === d - 1) last.days.push(d);
       else runs.push({ key: key, map: map, days: [d] });
@@ -3099,7 +3122,7 @@ function tcnColumns(tcn, wk) {
       groups.forEach(function (g) {
         if (!g.sig) { gaps.push(tcnDaysLabel(r.days) + ' ' + tcnWinLabel(w) + ' ' + g.markets.join('/')); return; }
         var rot = {};
-        tcnRot(tcn, wk, r.days[0], w.id, g.markets[0]).forEach(function (x) { rot[String(x.c).trim()] = (rot[String(x.c).trim()] || 0) + (parseFloat(x.s) || 0); });
+        tcnRot(tcn, wk, r.days[0], w.id, g.markets[0]).forEach(function (x) { var k = tcnKeyOf(tcn, x); rot[k] = (rot[k] || 0) + (parseFloat(x.s) || 0); });
         cols.push({
           win: w, days: r.days, markets: g.markets, all: g.markets.length === tcn.markets.length,
           time: tcnWinLabel(w), dayLabel: tcnDaysLabel(r.days),
@@ -3111,10 +3134,14 @@ function tcnColumns(tcn, wk) {
   });
   return { cols: cols, gaps: gaps };
 }
-function tcnFile(tcn, creative) {
+// QMS naming: campaignnumber_brandname_campaignname_filedimensions (no spaces or special characters).
+function tcnFile(tcn, assetOrName) {
   var id = String(tcn.qmsId || '').replace(/^0+/, '') || 'CAMPAIGNNO';
-  var c = String(creative || '').trim().replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-  return [id, 'PointsBet', c || 'TBC', TCN_SIZE.px].join('_');
+  var a = assetOrName && typeof assetOrName === 'object' ? assetOrName : null;
+  var n = a ? a.name : assetOrName;
+  var c = String(n || '').trim().replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  var px = a && a.w && a.h ? a.w + 'x' + a.h : TCN_SIZE.px;
+  return [id, 'PointsBet', c || 'TBC', px].join('_');
 }
 function tcnRound(rot) { return typeof usRound5 === 'function' ? usRound5(rot, function (k) { return k; }) : rot; }
 // QMS MI rows: one per column per creative, with dates, times and market.
@@ -3122,11 +3149,12 @@ function tcnMIRows(tcn, wk) {
   var out = [];
   tcnColumns(tcn, wk).cols.forEach(function (col) {
     var r = tcnRound(col.rot);
-    Object.keys(r).sort(function (a, b) { return (parseFloat(r[b]) - parseFloat(r[a])) || (a < b ? -1 : 1); }).forEach(function (c) {
+    Object.keys(r).sort(function (a, b) { return (parseFloat(r[b]) - parseFloat(r[a])) || (a < b ? -1 : 1); }).forEach(function (k) {
+      var info = tcnInfo(tcn, k);
       out.push({
         state: col.all ? 'All markets' : col.markets.join(', '), start: tcnAddDays(wk, col.days[0]), end: tcnAddDays(wk, col.days[col.days.length - 1]),
         from: col.win.from, to: col.win.to === '24:00' ? '23:59' : col.win.to, days: col.dayLabel,
-        share: parseFloat(r[c]) / 100, creative: c, file: tcnFile(tcn, c)
+        share: parseFloat(r[k]) / 100, creative: info.name, file: info.file, problem: info.problem
       });
     });
   });
@@ -3135,10 +3163,10 @@ function tcnMIRows(tcn, wk) {
 function tcnCreatives(tcn, wk) {
   var seen = {}, out = [];
   tcnColumns(tcn, wk).cols.forEach(function (col) {
-    Object.keys(col.rot).forEach(function (c) {
-      if (!seen[c]) { seen[c] = { creative: c, file: tcnFile(tcn, c), slots: [], where: [] }; out.push(seen[c]); }
-      var k = col.dayLabel + ' ' + col.time, slot = seen[c].slots.find(function (x) { return x.k === k; });
-      if (!slot) { slot = { k: k, markets: [] }; seen[c].slots.push(slot); }
+    Object.keys(col.rot).forEach(function (k) {
+      if (!seen[k]) { var info = tcnInfo(tcn, k); seen[k] = { key: k, creative: info.name, file: info.file, asset: info.asset, problem: info.problem, slots: [], where: [] }; out.push(seen[k]); }
+      var s = col.dayLabel + ' ' + col.time, slot = seen[k].slots.find(function (x) { return x.k === s; });
+      if (!slot) { slot = { k: s, markets: [] }; seen[k].slots.push(slot); }
       col.markets.forEach(function (m) { if (slot.markets.indexOf(m) < 0) slot.markets.push(m); });
     });
   });
@@ -3150,6 +3178,20 @@ function tcnCreatives(tcn, wk) {
   });
   return out;
 }
+// QMS TCN specs: 1080x1920 portrait, JPEG (72dpi, max 5MB, not CMYK or greyscale) or MP4 up to 10s at
+// 3,500-5,000 kbps, no audio needed.
+function tcnSpecIssues(a) {
+  var out = [];
+  if (a.type !== 'image' && a.type !== 'video') out.push('QMS takes JPEG or MP4 only');
+  if (a.type === 'image' && !/^\.jpe?g$/i.test(a.ext || '')) out.push('QMS takes JPEG, not ' + String(a.ext || '').replace('.', '').toUpperCase());
+  if (a.w && a.h && (a.w !== TCN_SIZE.w || a.h !== TCN_SIZE.h)) out.push('is ' + a.w + 'x' + a.h + ', needs 1080x1920 portrait');
+  if (a.type === 'image' && a.bytes > 5 * 1024 * 1024) out.push('over the 5MB limit');
+  if (a.type === 'image' && a.colour === 'cmyk') out.push('CMYK JPEGs are not supported');
+  if (a.type === 'image' && a.colour === 'grey') out.push('greyscale JPEGs are not supported');
+  if (a.type === 'video' && a.dur > 10.05) out.push('runs ' + (Math.round(a.dur * 10) / 10) + 's, max 10s');
+  if (a.type === 'video' && a.kbps && (a.kbps < 3500 || a.kbps > 5000)) out.push('bitrate ' + Math.round(a.kbps).toLocaleString() + ' kbps, QMS wants 3,500 to 5,000');
+  return out;
+}
 // Opening a week with nothing planned copies the most recent earlier week.
 function tcnCarry(tcn, wk) {
   if ((tcn.weeks || {})[wk]) return null;
@@ -3159,15 +3201,110 @@ function tcnCarry(tcn, wk) {
 }
 
 function tcnFmt(iso, yr) { if (!iso) return ''; var p = iso.split('-'); return p[2] + '/' + p[1] + (yr ? '/' + p[0] : ''); }
-function tcnAllCreatives(tcn) {
-  var seen = {}, out = [];
-  Object.keys(tcn.weeks || {}).sort().reverse().forEach(function (wk) {
+function tcnBytes(n) { return n >= 1048576 ? (n / 1048576).toFixed(1) + 'MB' : Math.round(n / 1024) + 'KB'; }
+
+// ---- 7-Eleven creative files ----
+// Uploaded files stay on the computer they were uploaded from (IndexedDB), so they can be downloaded again
+// under QMS's file name. Their details and a small thumbnail sync with the rest of the planner, so every
+// device can schedule them.
+var TCN_IDB = 'pointsbet-mi-planner-files';
+function tcnDB() {
+  return new Promise(function (res, rej) {
+    if (!window.indexedDB) { rej(new Error('No browser file storage')); return; }
+    var r = indexedDB.open(TCN_IDB, 1);
+    r.onupgradeneeded = function () { r.result.createObjectStore('files'); };
+    r.onsuccess = function () { res(r.result); };
+    r.onerror = function () { rej(r.error); };
+  });
+}
+function tcnStore(mode, fn) {
+  return tcnDB().then(function (db) {
+    return new Promise(function (res, rej) {
+      var tx = db.transaction('files', mode), req = fn(tx.objectStore('files'));
+      tx.oncomplete = function () { res(req && req.result); };
+      tx.onerror = function () { rej(tx.error); };
+    });
+  });
+}
+function tcnPutFile(id, blob) { return tcnStore('readwrite', function (s) { return s.put(blob, id); }); }
+function tcnGetFile(id) { return tcnStore('readonly', function (s) { return s.get(id); }); }
+function tcnDelFile(id) { return tcnStore('readwrite', function (s) { return s.delete(id); }); }
+// Colour model of a JPEG from its frame header: 4 components is CMYK, 1 is greyscale.
+function tcnJpegColour(buf) {
+  var b = new Uint8Array(buf), i = 2;
+  while (i + 9 < b.length) {
+    if (b[i] !== 0xFF) { i++; continue; }
+    var m = b[i + 1];
+    if (m >= 0xC0 && m <= 0xCF && m !== 0xC4 && m !== 0xC8 && m !== 0xCC) { var n = b[i + 9]; return n === 4 ? 'cmyk' : n === 1 ? 'grey' : 'rgb'; }
+    if (m === 0xD8 || m === 0x01 || m === 0xFF || (m >= 0xD0 && m <= 0xD7)) { i += m === 0xFF ? 1 : 2; continue; }
+    i += 2 + ((b[i + 2] << 8) | b[i + 3]);
+  }
+  return '';
+}
+function tcnNameFromFile(fn) {
+  var n = String(fn || '').replace(/\.[a-z0-9]+$/i, '').replace(/^(\d+[_ -]+)?PointsBet[_ -]+/i, '').replace(/[_ -]?\d{3,4}x\d{3,4}$/i, '');
+  return n.replace(/[_]+/g, ' ').replace(/\s+/g, ' ').trim() || 'Creative';
+}
+// Reads a dropped file: size, length and a thumbnail, then checks it against QMS's TCN specs.
+function tcnReadFile(f) {
+  return new Promise(function (resolve) {
+    var ext = '.' + String(f.name.split('.').pop() || '').toLowerCase();
+    var type = /^video\//.test(f.type) || ext === '.mp4' || ext === '.mov' ? 'video' : /^image\//.test(f.type) ? 'image' : 'other';
+    var a = { id: 'v' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: tcnNameFromFile(f.name), file: f.name, type: type, ext: ext,
+      w: 0, h: 0, dur: 0, bytes: f.size, kbps: 0, colour: '', thumb: '', added: new Date().toISOString().slice(0, 10) };
+    var url = URL.createObjectURL(f), done = false;
+    function finish() {
+      if (done) return; done = true;
+      URL.revokeObjectURL(url);
+      a.issues = tcnSpecIssues(a);
+      resolve(a);
+    }
+    function thumb(el, w, h) {
+      try {
+        var cw = 54, ch = Math.round(54 * h / w) || 96;
+        if (ch > 120) { ch = 120; cw = Math.round(120 * w / h); }
+        var cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+        cv.getContext('2d').drawImage(el, 0, 0, cw, ch);
+        a.thumb = cv.toDataURL('image/jpeg', 0.7);
+      } catch (e) {}
+    }
+    setTimeout(finish, 10000);
+    if (type === 'image') {
+      var img = new Image();
+      img.onload = function () {
+        a.w = img.naturalWidth; a.h = img.naturalHeight; thumb(img, a.w, a.h);
+        if (/^\.jpe?g$/.test(ext) && f.slice) {
+          var rd = new FileReader();
+          rd.onload = function () { a.colour = tcnJpegColour(rd.result); finish(); };
+          rd.onerror = finish;
+          rd.readAsArrayBuffer(f.slice(0, 262144));
+        } else finish();
+      };
+      img.onerror = finish;
+      img.src = url;
+    } else if (type === 'video') {
+      var v = document.createElement('video');
+      v.muted = true; v.preload = 'auto'; v.playsInline = true;
+      v.onloadedmetadata = function () {
+        a.w = v.videoWidth; a.h = v.videoHeight; a.dur = v.duration || 0;
+        if (a.dur) a.kbps = f.size * 8 / 1000 / a.dur;
+        try { v.currentTime = Math.min(0.5, a.dur / 2); } catch (e) { finish(); }
+      };
+      v.onseeked = function () { thumb(v, a.w, a.h); finish(); };
+      v.onerror = finish;
+      v.src = url;
+    } else finish();
+  });
+}
+function tcnUsage(tcn, id) {
+  var weeks = {};
+  Object.keys(tcn.weeks || {}).forEach(function (wk) {
     var w = tcn.weeks[wk] || {};
     Object.keys(w).forEach(function (d) { Object.keys(w[d] || {}).forEach(function (wid) { Object.keys(w[d][wid] || {}).forEach(function (m) {
-      (w[d][wid][m] || []).forEach(function (x) { var c = String(x.c || '').trim(); if (c && !seen[c]) { seen[c] = 1; out.push(c); } });
+      (w[d][wid][m] || []).forEach(function (x) { if (x.id === id) weeks[wk] = 1; });
     }); }); });
   });
-  return out;
+  return Object.keys(weeks).sort();
 }
 
 // Workbook for QMS: the one-page grid, their MI template with dates, times and markets, and the artwork list.
@@ -3200,8 +3337,8 @@ function tcnExport(tcn, wk, XLSX, zap) {
 
     // Instructions: windows across, creatives down, each column adds to 100%
     var rounded = cols.map(function (c) { return tcnRound(c.rot); });
-    var creatives = [];
-    cols.forEach(function (c) { Object.keys(c.rot).forEach(function (k) { if (creatives.indexOf(k) < 0) creatives.push(k); }); });
+    var keys = [];
+    cols.forEach(function (c) { Object.keys(c.rot).forEach(function (k) { if (keys.indexOf(k) < 0) keys.push(k); }); });
     var n = cols.length, rows = [], merges = [];
     rows.push([{ v: '7-Eleven Material Instructions ' + String.fromCharCode(8212) + ' WC ' + tcnFmt(wk, true) + ' (Mon' + String.fromCharCode(8211) + 'Sun)', b: true }]);
     rows.push([{ v: 'QMS The Convenience Network · ' + TCN_SIZE.px + ' portrait · JPEG or MP4 up to 10s · artwork and MI to production@qmsmedia.com by Mon ' + tcnFmt(due, true) }]);
@@ -3218,8 +3355,11 @@ function tcnExport(tcn, wk, XLSX, zap) {
       if (last) { if (2 + i > start) merges.push({ s: { r: 3, c: start }, e: { r: 3, c: 2 + i } }); start = 3 + i; }
     });
     rows.push(h1, h2);
-    creatives.forEach(function (k) {
-      rows.push([{ v: tcnFile(tcn, k), b: true, box: true }, { v: k, box: true }].concat(rounded.map(function (r) {
+    var problems = [];
+    keys.forEach(function (k) {
+      var info = tcnInfo(tcn, k);
+      if (info.problem) problems.push(info.problem);
+      rows.push([{ v: info.file, b: true, box: true, color: info.asset ? undefined : 'C00000' }, { v: info.name, box: true }].concat(rounded.map(function (r) {
         return r[k] != null ? { v: r[k] + '%', b: true, box: true, align: 'center' } : { v: String.fromCharCode(8211), color: '9CA3AF', box: true, align: 'center' };
       })));
     });
@@ -3228,7 +3368,7 @@ function tcnExport(tcn, wk, XLSX, zap) {
       return { v: t + '%', b: true, color: t === 100 ? MID : 'C00000', align: 'center' };
     })));
     var heights = []; heights[4] = { hpt: 32 };
-    XLSX.utils.book_append_sheet(wb, sheet(rows, [42, 26].concat(cols.map(function () { return 15; })), merges, heights), 'Instructions');
+    XLSX.utils.book_append_sheet(wb, sheet(rows, [44, 26].concat(cols.map(function () { return 15; })), merges, heights), 'Instructions');
 
     // QMS Material Instructions template
     var H = function (t) { return { v: t, b: true, fill: PAPER, box: true }; };
@@ -3238,28 +3378,33 @@ function tcnExport(tcn, wk, XLSX, zap) {
     tcnMIRows(tcn, wk).forEach(function (r) {
       var B = function (v, o) { return Object.assign({ v: v, box: true }, o || {}); };
       mr.push([B('The Convenience Network'), B(''), B(''), B(''), B(r.state, { b: true }), B(''), B('', { date: r.start }), B('', { date: r.end }), B(''), B(TCN_SIZE.w), B(TCN_SIZE.h),
-        B('Programmatic'), B(''), B(''), B(r.from), B(r.to), B(r.share, { z: '0%' }), B(r.file)]);
+        B('Programmatic'), B(''), B(''), B(r.from), B(r.to), B(r.share, { z: '0%' }), B(r.file, r.problem && r.file === 'TBC' ? { color: 'C00000', b: true } : {})]);
     });
     XLSX.utils.book_append_sheet(wb, sheet(mr, [24, 9, 9, 9, 22, 9, 12, 12, 7, 11, 11, 13, 10, 7, 10, 9, 8, 46]), 'Material Instructions');
 
-    // Artwork
+    // Artwork: the uploaded files, under the names QMS wants
     var ar = [[{ v: '7-Eleven artwork ' + String.fromCharCode(8212) + ' WC ' + tcnFmt(wk, true), b: true }], [],
-      [H('Creative'), H('File name'), H('Size'), H('Format'), H('Runs'), H('Due')]];
+      [H('Creative'), H('File name for QMS'), H('Uploaded file'), H('Format'), H('Size'), H('File size'), H('Spec check'), H('Runs'), H('Due')]];
     tcnCreatives(tcn, wk).forEach(function (c) {
-      ar.push([{ v: c.creative, b: true, box: true }, { v: c.file, box: true }, { v: TCN_SIZE.px + ' portrait', box: true }, { v: 'JPEG, or MP4 up to 10s', box: true },
+      var a = c.asset, issues = a ? (a.issues || []) : [c.problem];
+      ar.push([{ v: c.creative, b: true, box: true }, { v: a ? c.file + a.ext : c.file, box: true }, { v: a ? a.file : 'Not uploaded', box: true, color: a ? undefined : 'C00000' },
+        { v: a ? (a.type === 'video' ? 'MP4, ' + (Math.round(a.dur * 10) / 10) + 's' : String(a.ext).replace('.', '').toUpperCase()) : '', box: true },
+        { v: a && a.w ? a.w + 'x' + a.h : '', box: true }, { v: a ? tcnBytes(a.bytes) : '', box: true },
+        { v: issues.length ? issues.join('; ') : 'Meets QMS specs', box: true, wrap: true, color: issues.length ? 'C00000' : '166534' },
         { v: c.where.join('; '), box: true, wrap: true }, { v: '', date: due, box: true }]);
     });
-    XLSX.utils.book_append_sheet(wb, sheet(ar, [26, 46, 18, 22, 60, 12]), 'Artwork');
+    XLSX.utils.book_append_sheet(wb, sheet(ar, [26, 50, 34, 12, 12, 10, 36, 56, 12]), 'Artwork');
 
     var name = '7-Eleven MI WC' + wk + '.xlsx';
     var out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
     var url = URL.createObjectURL(new Blob([out], { type: 'application/octet-stream' }));
-    var a = document.createElement('a'); a.href = url; a.download = name;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    var a2 = document.createElement('a'); a2.href = url; a2.download = name;
+    document.body.appendChild(a2); a2.click(); document.body.removeChild(a2);
     setTimeout(function () { URL.revokeObjectURL(url); }, 150);
     var warn = [];
     if (!tcn.qmsId) warn.push('no QMS campaign number, file names use CAMPAIGNNO');
     if (res.gaps.length) warn.push('no creative for ' + res.gaps.join('; '));
+    if (problems.length) warn.push(problems.join('; '));
     zap(warn.length ? '✓ 7-Eleven MI exported · ⚠ ' + warn.join(' · ') : '✓ 7-Eleven MI exported (' + cols.length + ' columns)');
   } catch (e) { zap('⚠ Export failed: ' + (e && e.message ? e.message : e)); }
 }
@@ -3271,6 +3416,10 @@ function SevenEleven(props) {
   var stWk = React.useState(tcnAddDays(tcnMonday(todayISO), 7)), wk = stWk[0], setWk = stWk[1];
   var stDay = React.useState(0), day = stDay[0], setDay = stDay[1];
   var stSet = React.useState(false), showSet = stSet[0], setShowSet = stSet[1];
+  var stDrop = React.useState(false), dropOn = stDrop[0], setDropOn = stDrop[1];
+  var stBusy = React.useState(0), busy = stBusy[0], setBusy = stBusy[1];
+  var fileRef = React.useRef(null);
+  var lib = tcn.library || [];
   var nWeeks = Object.keys(tcn.weeks || {}).length;
   React.useEffect(function () {
     var c = tcnCarry(tcn, wk);
@@ -3283,7 +3432,6 @@ function SevenEleven(props) {
   var th = { padding: '6px 8px', fontSize: 11, fontWeight: 800, color: '#374151', background: '#f3f4f6', borderBottom: '1px solid #e5e7eb', textAlign: 'left', whiteSpace: 'nowrap' };
   var td = { padding: '6px 8px', fontSize: 12, borderBottom: '1px solid #f1f5f9', verticalAlign: 'top' };
   var link = { border: 'none', background: 'none', color: '#2563eb', fontSize: 11, cursor: 'pointer', padding: '2px 0' };
-  var listId = 'tcn-creatives';
 
   function upd(fn) { setTcn(function (p) { var n = JSON.parse(JSON.stringify(p || TCN_DEFAULT)); fn(n); return n; }); }
   function setCell(d, wid, mkt, entries) {
@@ -3301,26 +3449,115 @@ function SevenEleven(props) {
   }
   function evenSplit(n) { var out = [], base = Math.floor(100 / n / 5) * 5; for (var i = 0; i < n; i++) out.push(base); out[0] += 100 - base * n; return out; }
 
+  // ---- uploads ----
+  function addFiles(files) {
+    var list = Array.prototype.slice.call(files || []);
+    if (!list.length) return;
+    setBusy(function (b) { return b + list.length; });
+    Promise.all(list.map(function (f) {
+      return tcnReadFile(f).then(function (a) { return tcnPutFile(a.id, f).then(function () { return a; }, function () { a.noFile = true; return a; }); });
+    })).then(function (assets) {
+      var skipped = [];
+      upd(function (n) {
+        n.library = n.library || [];
+        assets.forEach(function (a) {
+          if (n.library.some(function (x) { return x.file === a.file && x.bytes === a.bytes; })) { skipped.push(a.file); return; }
+          delete a.noFile; n.library.push(a);
+        });
+      });
+      setBusy(function (b) { return Math.max(0, b - list.length); });
+      var bad = assets.filter(function (a) { return (a.issues || []).length; });
+      zap('✓ ' + (assets.length - skipped.length) + ' creative' + (assets.length - skipped.length === 1 ? '' : 's') + ' added' +
+        (skipped.length ? ' · already uploaded: ' + skipped.join(', ') : '') + (bad.length ? ' · ⚠ ' + bad.length + ' outside QMS specs' : ''));
+    });
+  }
+  function download(a) {
+    tcnGetFile(a.id).then(function (blob) {
+      if (!blob) { zap('⚠ ' + a.file + ' was uploaded on another computer. Upload it again here to download it.'); return; }
+      var url = URL.createObjectURL(blob), el = document.createElement('a');
+      el.href = url; el.download = tcnFile(tcn, a) + a.ext;
+      document.body.appendChild(el); el.click(); document.body.removeChild(el);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 500);
+    }, function () { zap('⚠ This browser can’t read stored files'); });
+  }
+  function removeAsset(a) {
+    var used = tcnUsage(tcn, a.id);
+    if (!window.confirm('Remove ' + a.name + (used.length ? '? It’s scheduled in ' + used.length + ' week' + (used.length === 1 ? '' : 's') + ', which will show it as removed.' : '?'))) return;
+    upd(function (n) { n.library = (n.library || []).filter(function (x) { return x.id !== a.id; }); });
+    tcnDelFile(a.id).catch(function () {});
+  }
+  function onDropFiles(e) {
+    if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+    e.preventDefault(); setDropOn(false); addFiles(e.dataTransfer.files);
+  }
+  var tiles = lib.map(function (a) {
+    var ok = !(a.issues || []).length;
+    return h('div', { key: a.id, draggable: true, title: 'Drag onto a slot below',
+      onDragStart: function (e) { e.dataTransfer.setData('text/plain', 'tcn:' + a.id); e.dataTransfer.effectAllowed = 'copy'; },
+      style: { display: 'flex', gap: 10, alignItems: 'flex-start', border: '1px solid #e5e7eb', borderRadius: 10, padding: 8, width: 300, background: '#fff', cursor: 'grab' } },
+      a.thumb ? h('img', { src: a.thumb, alt: '', draggable: false, style: { width: 45, height: 80, objectFit: 'cover', borderRadius: 4, background: '#111827', flex: '0 0 45px' } })
+        : h('div', { style: { width: 45, height: 80, borderRadius: 4, background: '#e5e7eb', flex: '0 0 45px' } }),
+      h('div', { style: { flex: 1, minWidth: 0 } },
+        h('input', { value: a.name, onChange: function (e) { var v = e.target.value; upd(function (n) { var x = (n.library || []).find(function (y) { return y.id === a.id; }); if (x) x.name = v; }); },
+          style: Object.assign({}, inp, { width: '100%', boxSizing: 'border-box', fontWeight: 700, fontSize: 12 }) }),
+        h('div', { style: { fontSize: 11, color: '#6b7280', marginTop: 3 } }, (a.type === 'video' ? 'MP4 · ' + (Math.round(a.dur * 10) / 10) + 's' : String(a.ext).replace('.', '').toUpperCase()) + ' · ' + (a.w ? a.w + 'x' + a.h + ' · ' : '') + tcnBytes(a.bytes)),
+        h('div', { style: { fontSize: 11, marginTop: 2, color: ok ? '#166534' : '#b91c1c', fontWeight: 700 } }, ok ? 'Meets QMS specs' : a.issues.join('; ')),
+        h('div', { style: { display: 'flex', gap: 10, marginTop: 2 } },
+          h('button', { style: link, onClick: function () { download(a); }, title: tcnFile(tcn, a) + a.ext }, 'Download for QMS'),
+          h('button', { style: Object.assign({}, link, { color: '#9ca3af' }), onClick: function () { removeAsset(a); } }, 'Remove'))));
+  });
+  var tray = h('div', { style: Object.assign({}, card, dropOn ? { outline: '2px dashed #EE1A42', outlineOffset: -4 } : {}),
+      onDragOver: function (e) { if (e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], 'Files') >= 0) { e.preventDefault(); if (!dropOn) setDropOn(true); } },
+      onDragLeave: function (e) { if (e.currentTarget === e.target) setDropOn(false); },
+      onDrop: onDropFiles },
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: lib.length ? 10 : 0 } },
+      h('span', { style: lab }, 'Creatives'),
+      h('span', { style: { fontSize: 11, color: '#6b7280' } }, lib.length ? lib.length + ' uploaded. Drag one onto a slot below, or pick it from the slot’s list.' : 'Drop JPEG or MP4 files here (1080x1920 portrait, MP4 up to 10s), then drag them onto the slots below.'),
+      busy ? h('span', { style: { fontSize: 11, color: '#92400e', fontWeight: 700 } }, 'Reading ' + busy + ' file' + (busy === 1 ? '' : 's') + '…') : null,
+      h('button', { onClick: function () { if (fileRef.current) { fileRef.current.value = ''; fileRef.current.click(); } }, style: { marginLeft: 'auto', background: 'linear-gradient(90deg,#EE1A42,#c8123a)', color: '#fff', border: 'none', borderRadius: 9, padding: '7px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer' } }, '+ Upload files'),
+      h('input', { ref: fileRef, type: 'file', multiple: true, accept: 'image/jpeg,image/png,video/mp4,.jpg,.jpeg,.png,.mp4', onChange: function (e) { addFiles(e.target.files); }, style: { display: 'none' } })),
+    lib.length ? h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } }, tiles) : null,
+    lib.length ? h('div', { style: { fontSize: 11, color: '#9ca3af', marginTop: 8 } }, 'Files are kept on the computer you upload them from, so download them for QMS from there. Names, thumbnails and spec checks sync everywhere.') : null);
+
+  // ---- slots ----
+  function chip(x) {
+    var a = tcnAsset(tcn, x);
+    return a && a.thumb ? h('img', { src: a.thumb, alt: '', style: { width: 18, height: 32, objectFit: 'cover', borderRadius: 2, flex: '0 0 18px' } }) : h('div', { style: { width: 18, height: 32, borderRadius: 2, background: '#e5e7eb', flex: '0 0 18px' } });
+  }
   function RotCell(o) {
     var entries = o.entries, inherited = o.inherited;
+    var dropProps = {
+      onDragOver: function (e) { var t = e.dataTransfer && e.dataTransfer.types; if (t && Array.prototype.indexOf.call(t, 'text/plain') >= 0) { e.preventDefault(); e.currentTarget.style.outline = '2px dashed #EE1A42'; } },
+      onDragLeave: function (e) { e.currentTarget.style.outline = 'none'; },
+      onDrop: function (e) { e.currentTarget.style.outline = 'none'; var v = e.dataTransfer.getData('text/plain'); if (v.indexOf('tcn:') === 0) { e.preventDefault(); o.onChange([{ id: v.slice(4), s: 100 }]); } },
+      style: { minHeight: 34, borderRadius: 6, padding: 2 }
+    };
     if (entries == null && inherited) {
-      var names = inherited.filter(function (x) { return String(x.c || '').trim(); });
-      return h('div', null,
-        h('div', { style: { fontSize: 11, color: '#9ca3af' } }, names.length ? names.map(function (x) { return x.c + (inherited.length > 1 ? ' ' + x.s + '%' : ''); }).join(', ') : '–'),
-        h('button', { style: link, onClick: function () { o.onChange(names.length ? JSON.parse(JSON.stringify(names)) : [{ c: '', s: 100 }]); } }, 'change for ' + o.mkt));
+      var inh = inherited.filter(function (x) { return x.id || String(x.c || '').trim(); });
+      return h('div', dropProps,
+        h('div', { style: { display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap', opacity: 0.55 } }, inh.length ? inh.map(function (x, i) {
+          var a = tcnAsset(tcn, x);
+          return h('span', { key: i, style: { display: 'inline-flex', gap: 4, alignItems: 'center', fontSize: 11 } }, chip(x), (a ? a.name : x.c || 'Removed') + (inh.length > 1 ? ' ' + x.s + '%' : ''));
+        }) : h('span', { style: { fontSize: 11, color: '#9ca3af' } }, '–')),
+        h('button', { style: link, onClick: function () { o.onChange(inh.length ? JSON.parse(JSON.stringify(inh)) : [{ id: '', s: 100 }]); } }, 'change for ' + o.mkt));
     }
-    var list = entries && entries.length ? entries : [{ c: '', s: 100 }];
+    var list = entries && entries.length ? entries : [{ id: '', s: 100 }];
     var total = list.reduce(function (t, x) { return t + (parseFloat(x.s) || 0); }, 0);
-    return h('div', null,
+    return h('div', dropProps,
       list.map(function (x, i) {
+        var a = tcnAsset(tcn, x), legacy = !a && (x.c || x.id);
         return h('div', { key: i, style: { display: 'flex', gap: 4, alignItems: 'center', marginBottom: 3 } },
-          h('input', { list: listId, value: x.c, placeholder: 'creative', onChange: function (e) { var l = JSON.parse(JSON.stringify(list)); l[i].c = e.target.value; o.onChange(l); }, style: Object.assign({}, inp, { width: 132 }) }),
+          chip(x),
+          h('select', { value: a ? a.id : '', onChange: function (e) { var l = JSON.parse(JSON.stringify(list)); l[i] = { id: e.target.value, s: l[i].s }; o.onChange(l); },
+            style: Object.assign({}, inp, { width: 140, borderColor: legacy ? '#fca5a5' : '#d1d5db' }) },
+            [h('option', { key: '', value: '' }, legacy ? '⚠ ' + (x.c ? x.c + ' (not uploaded)' : 'Removed creative') : (lib.length ? 'Choose creative' : 'Upload creatives first'))]
+              .concat(lib.map(function (c) { return h('option', { key: c.id, value: c.id }, ((c.issues || []).length ? '⚠ ' : '') + c.name); }))),
           list.length > 1 ? h('input', { type: 'number', min: 0, max: 100, step: 5, value: x.s, onChange: function (e) { var l = JSON.parse(JSON.stringify(list)); l[i].s = e.target.value === '' ? '' : Number(e.target.value); o.onChange(l); }, style: Object.assign({}, inp, { width: 46 }) }) : null,
           list.length > 1 ? h('span', { style: { fontSize: 11, color: '#6b7280' } }, '%') : null,
           list.length > 1 ? h('button', { style: Object.assign({}, link, { color: '#9ca3af' }), title: 'Remove', onClick: function () { var l = list.filter(function (_, j) { return j !== i; }); if (l.length === 1) l[0].s = 100; o.onChange(l); } }, '×') : null);
       }),
       h('div', { style: { display: 'flex', gap: 10, alignItems: 'center' } },
-        h('button', { style: link, onClick: function () { var l = JSON.parse(JSON.stringify(list)).concat([{ c: '', s: 0 }]); var sp = evenSplit(l.length); l.forEach(function (y, j) { y.s = sp[j]; }); o.onChange(l); } }, '+ split'),
+        h('button', { style: link, onClick: function () { var l = JSON.parse(JSON.stringify(list)).concat([{ id: '', s: 0 }]); var sp = evenSplit(l.length); l.forEach(function (y, j) { y.s = sp[j]; }); o.onChange(l); } }, '+ split'),
         o.mkt !== 'ALL' ? h('button', { style: Object.assign({}, link, { color: '#6b7280' }), onClick: function () { o.onChange(null); } }, '↺ same as all') : null,
         list.length > 1 && total !== 100 ? h('span', { style: { fontSize: 11, color: '#b91c1c', fontWeight: 700 } }, total + '%') : null));
   }
@@ -3388,10 +3625,9 @@ function SevenEleven(props) {
           .concat(TCN_DAYS.map(function (dl, di) { return di === day ? null : h('option', { key: dl, value: String(di) }, dl); })))));
 
   var dayWins = tcnWindowsSorted(tcn).filter(function (w) { return w.days.indexOf(day) >= 0; });
-  var dl = h('datalist', { id: listId }, tcnAllCreatives(tcn).map(function (c) { return h('option', { key: c, value: c }); }));
-  var editor = h('div', { style: card }, dl,
+  var editor = h('div', { style: card },
     h('div', { style: Object.assign({}, lab, { marginBottom: 4 }) }, TCN_DAYS[day] + ' ' + tcnFmt(tcnAddDays(wk, day), true)),
-    h('div', { style: { fontSize: 11, color: '#6b7280', marginBottom: 10 } }, 'Set the creative for all markets, then change any state that runs something different. Use + split to run two creatives in one window.'),
+    h('div', { style: { fontSize: 11, color: '#6b7280', marginBottom: 10 } }, 'Drag a creative onto All markets, or onto a state that runs something different. Use + split to run two creatives in one window.'),
     dayWins.length ? h('div', { style: { overflowX: 'auto' } }, h('table', { style: { borderCollapse: 'collapse', width: '100%' } },
       h('thead', null, h('tr', null, h('th', { style: th }, 'Window'), h('th', { style: th }, 'All markets'), tcn.markets.map(function (m) { return h('th', { key: m, style: th }, m); }))),
       h('tbody', null, dayWins.map(function (w) {
@@ -3407,13 +3643,15 @@ function SevenEleven(props) {
   // preview of what QMS receives
   var res = tcnColumns(tcn, wk);
   var rounded = res.cols.map(function (c) { return tcnRound(c.rot); });
-  var crs = [];
-  res.cols.forEach(function (c) { Object.keys(c.rot).forEach(function (k) { if (crs.indexOf(k) < 0) crs.push(k); }); });
+  var keys = [];
+  res.cols.forEach(function (c) { Object.keys(c.rot).forEach(function (k) { if (keys.indexOf(k) < 0) keys.push(k); }); });
+  var probs = keys.map(function (k) { return tcnInfo(tcn, k).problem; }).filter(Boolean);
   var preview = h('div', { style: card },
     h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 8, flexWrap: 'wrap' } },
       h('span', { style: lab }, 'What QMS gets for the week'),
       h('span', { style: { fontSize: 11, color: '#6b7280' } }, res.cols.length + ' columns. Days and markets with the same creative share a column, and every % is rounded to 5.')),
-    res.gaps.length ? h('div', { style: { fontSize: 12, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '6px 10px', marginBottom: 8 } }, 'No creative yet: ' + res.gaps.join(' · ')) : null,
+    res.gaps.length || probs.length ? h('div', { style: { fontSize: 12, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '6px 10px', marginBottom: 8 } },
+      res.gaps.length ? h('div', null, 'No creative yet: ' + res.gaps.join(' · ')) : null, probs.length ? h('div', null, 'Check: ' + probs.join(' · ')) : null) : null,
     res.cols.length ? h('div', { style: { overflowX: 'auto' } }, h('table', { style: { borderCollapse: 'collapse' } },
       h('thead', null,
         h('tr', null, h('th', { style: th }, 'Creative'), res.cols.map(function (c, i) {
@@ -3423,12 +3661,16 @@ function SevenEleven(props) {
         h('tr', null, h('th', { style: th }, ''), res.cols.map(function (c, i) {
           return h('th', { key: i, style: Object.assign({}, th, { textAlign: 'center', whiteSpace: 'normal', minWidth: 90 }) }, c.dayLabel, c.all ? null : h('div', { style: { fontWeight: 600, color: '#6b7280' } }, c.marketLabel));
         }))),
-      h('tbody', null, crs.map(function (k) {
-        return h('tr', { key: k }, h('td', { style: Object.assign({}, td, { fontWeight: 700, whiteSpace: 'nowrap' }) }, k, h('div', { style: { fontFamily: 'ui-monospace,Menlo,monospace', fontSize: 10, color: '#6b7280', fontWeight: 400 } }, tcnFile(tcn, k))),
+      h('tbody', null, keys.map(function (k) {
+        var info = tcnInfo(tcn, k);
+        return h('tr', { key: k }, h('td', { style: Object.assign({}, td, { whiteSpace: 'nowrap' }) },
+          h('div', { style: { display: 'flex', gap: 8, alignItems: 'center' } },
+            info.asset && info.asset.thumb ? h('img', { src: info.asset.thumb, alt: '', style: { width: 18, height: 32, objectFit: 'cover', borderRadius: 2 } }) : null,
+            h('div', null, h('div', { style: { fontWeight: 700, color: info.asset ? '#111827' : '#b91c1c' } }, info.name), h('div', { style: { fontFamily: 'ui-monospace,Menlo,monospace', fontSize: 10, color: '#6b7280' } }, info.file)))),
           rounded.map(function (r, i) { return h('td', { key: i, style: Object.assign({}, td, { textAlign: 'center', fontWeight: r[k] != null ? 800 : 400, color: r[k] != null ? '#111827' : '#d1d5db' }) }, r[k] != null ? r[k] + '%' : '–'); }));
       })))) : h('div', { style: { fontSize: 12, color: '#6b7280' } }, 'Nothing planned for this week yet.'));
 
-  return h('div', null, header, settings, dayTabs, editor, preview);
+  return h('div', null, header, settings, tray, dayTabs, editor, preview);
 }
 
 // ---- SEN radio: NFL 2026-27 partnership ----
@@ -3479,10 +3721,12 @@ function senGameLabel(i) {
   return { WC: 'Wild Card', DIV: 'Divisional', CON: 'Conference', SB: 'Super Bowl' }[g] || 'Week ' + g;
 }
 // Entitlements running in a week, in plan order, with their quantity.
+// Only the commercials need material from us; the reads, segments, updates and social in the plan are
+// SEN's to produce, so they're kept in SEN_PLAN for reference but left out of the tab and the MI.
 function senRunning(wk) {
   var i = senWeekIndex(wk), out = [];
   SEN_PLAN.programs.forEach(function (p) {
-    p.ents.forEach(function (e) { var q = e.qty[i]; if (q) out.push({ prog: p, ent: e, qty: q }); });
+    p.ents.forEach(function (e) { var q = e.qty[i]; if (q && e.type === 'spots') out.push({ prog: p, ent: e, qty: q }); });
   });
   return out;
 }
@@ -5766,7 +6010,7 @@ function App() {
     if (d.usOn && Object.keys(d.usOn).length) setUsOn(d.usOn);
     if (d.usSplit && Object.keys(d.usSplit).length) setUsSplit(d.usSplit);
     if (d.lf && d.lf.length) setLfCamps(d.lf);
-    if (d.tcn && d.tcn.windows && Object.keys(d.tcn.weeks || {}).length) setTcn(d.tcn);
+    if (d.tcn && d.tcn.windows && (Object.keys(d.tcn.weeks || {}).length || (d.tcn.library || []).length)) setTcn(d.tcn);
     if (d.sen && Object.keys(d.sen.weeks || {}).length) setSen(d.sen);
     if (d.sentMap) setSentMap(d.sentMap);
     if (d.dueOv) setDueOv(d.dueOv);
