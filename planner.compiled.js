@@ -2345,6 +2345,1087 @@ function PlatformTabHeader(props) {
     }));
 }
 
+// ---- Large format (QMS) ----
+// Reads the two spreadsheets QMS sends: the client schedule from sales (one row per panel, a column per
+// week marked p = paid, B = bonus, plus a MOVE audience summary sheet) and the production specs export
+// that comes with the campaign welcome email (one row per panel booking with pixel size, slot length and
+// content restrictions). Both become one campaign: panels, the weeks each is live, and value/audience.
+var LF_STATES = ['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'ACT', 'NT'];
+function lfNorm(s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9%]+/g, ''); }
+function lfISOFromSerial(n) {
+  var d = new Date(Date.UTC(1899, 11, 30) + Math.round(n) * 86400000);
+  return d.toISOString().slice(0, 10);
+}
+function lfAddDays(iso, n) {
+  var d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10);
+}
+function lfMonday(iso) {
+  var d = new Date(iso + 'T00:00:00Z'); var wd = (d.getUTCDay() + 6) % 7; d.setUTCDate(d.getUTCDate() - wd); return d.toISOString().slice(0, 10);
+}
+function lfDateCell(v) {
+  if (typeof v === 'number' && v > 40000 && v < 60000) return lfISOFromSerial(v);
+  if (v instanceof Date && !isNaN(v)) return v.toISOString().slice(0, 10);
+  if (typeof v === 'string') {
+    var m = v.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})$/);
+    if (m) { var y = m[3].length === 2 ? '20' + m[3] : m[3]; return y + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[1]).slice(-2); }
+    if (/^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10);
+  }
+  return '';
+}
+function lfSize(txt, w, h) {
+  w = parseInt(w, 10); h = parseInt(h, 10);
+  if (!(w > 0 && h > 0)) {
+    var m = String(txt == null ? '' : txt).match(/(\d{2,5})\D+?(\d{2,5})/);
+    if (m) { w = parseInt(m[1], 10); h = parseInt(m[2], 10); }
+  }
+  return w > 0 && h > 0 ? { w: w, h: h, px: w + 'x' + h } : { w: 0, h: 0, px: '' };
+}
+function lfNum(v) {
+  if (typeof v === 'number') return v;
+  var n = parseFloat(String(v == null ? '' : v).replace(/[$,%\s]/g, ''));
+  return isNaN(n) ? null : n;
+}
+function lfRows(XLSX, ws) { return XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null, blankrows: true }); }
+function lfFindCol(hdr, keys, exact) {
+  for (var i = 0; i < hdr.length; i++) {
+    var n = lfNorm(hdr[i]);
+    if (!n) continue;
+    for (var k = 0; k < keys.length; k++) {
+      if (exact ? n === keys[k] : n.indexOf(keys[k]) === 0) return i;
+    }
+  }
+  return -1;
+}
+function lfCleanName(file) {
+  return String(file || 'QMS campaign').replace(/\.[a-z0-9]+$/i, '').replace(/^QMS[_ -]+/i, '').replace(/[_ ]+CLIENT$/i, '')
+    .replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+}
+function lfMark(v) {
+  var s = String(v == null ? '' : v).trim();
+  if (!s) return '';
+  var n = s.toLowerCase();
+  if (n === 'n/a' || n === 'na' || n === '-' || n === 'x/a') return 'na';
+  if (n === 'b' || n.indexOf('bonus') === 0) return 'b';
+  return 'p';
+}
+
+// Client schedule: header row holds "SITE NUMBER / NO. OF PANELS"; week columns are dated header cells.
+function lfParseSchedule(XLSX, wb, file) {
+  var sheetName = null, rows = null, hr = -1;
+  wb.SheetNames.some(function (sn) {
+    var rs = lfRows(XLSX, wb.Sheets[sn]);
+    for (var r = 0; r < Math.min(rs.length, 40); r++) {
+      if ((rs[r] || []).some(function (v) { return lfNorm(v).indexOf('sitenumber') === 0; })) { sheetName = sn; rows = rs; hr = r; return true; }
+    }
+    return false;
+  });
+  if (!rows) return null;
+  var hdr = rows[hr] || [];
+  var C = {
+    lat: lfFindCol(hdr, ['latitude']), lng: lfFindCol(hdr, ['longitude']), qfmt: lfFindCol(hdr, ['qmsformat']),
+    state: lfFindCol(hdr, ['state'], true), site: lfFindCol(hdr, ['sitenumber']), addr: lfFindCol(hdr, ['address']),
+    suburb: lfFindCol(hdr, ['suburb']), pc: lfFindCol(hdr, ['postcode']), dir: lfFindCol(hdr, ['direction']),
+    fmt: lfFindCol(hdr, ['format'], true), sizem: lfFindCol(hdr, ['size'], true), px: lfFindCol(hdr, ['digitalspecs']),
+    sot: lfFindCol(hdr, ['shareoftime', 'sot']), dur: lfFindCol(hdr, ['adduration', 'slotlength']),
+    illum: lfFindCol(hdr, ['illumination'], true), rate: lfFindCol(hdr, ['weeklymarketrate']),
+    mval: lfFindCol(hdr, ['mediavalueincbonus', 'mediavalue']), mkt: lfFindCol(hdr, ['marketvalue']),
+    bval: lfFindCol(hdr, ['bonusmediavalue']), bought: lfFindCol(hdr, ['mediaboughtrate', 'boughtrate', 'nettcost', 'netcost'])
+  };
+  if (C.site < 0) return null;
+  var weekCols = [];
+  hdr.forEach(function (v, i) { var iso = lfDateCell(v); if (iso && typeof v !== 'string') weekCols.push({ i: i, wk: lfMonday(iso) }); });
+  var panels = {}, order = [], lastPanelRow = hr, value = { media: 0, market: 0, bonus: 0, bought: null };
+  for (var r = hr + 1; r < rows.length; r++) {
+    var row = rows[r] || [];
+    var site = row[C.site];
+    var hasFmt = (C.fmt >= 0 && row[C.fmt]) || (C.qfmt >= 0 && row[C.qfmt]) || (C.px >= 0 && row[C.px]);
+    if (site == null || String(site).trim() === '' || !hasFmt) continue;
+    lastPanelRow = r;
+    var id = String(site).trim();
+    var sz = lfSize(C.px >= 0 ? row[C.px] : '');
+    var p = panels[id];
+    if (!p) {
+      p = panels[id] = {
+        id: id, state: C.state >= 0 ? String(row[C.state] || '').trim().toUpperCase() : '',
+        addr: C.addr >= 0 ? String(row[C.addr] || '').trim() : '', suburb: C.suburb >= 0 ? String(row[C.suburb] || '').trim() : '',
+        pc: C.pc >= 0 && row[C.pc] != null ? String(row[C.pc]) : '', dir: C.dir >= 0 ? String(row[C.dir] || '').trim() : '',
+        type: C.qfmt >= 0 ? String(row[C.qfmt] || '').trim() : (C.fmt >= 0 ? String(row[C.fmt] || '').trim() : ''),
+        px: sz.px, w: sz.w, h: sz.h, size: C.sizem >= 0 ? String(row[C.sizem] || '').trim() : '',
+        sot: C.sot >= 0 ? lfNum(row[C.sot]) : null, dur: C.dur >= 0 ? lfNum(row[C.dur]) : null,
+        illum: C.illum >= 0 ? String(row[C.illum] || '').trim() : '', rate: C.rate >= 0 ? lfNum(row[C.rate]) : null,
+        restrict: '', link: '', weeks: {}, na: []
+      };
+      order.push(id);
+    }
+    weekCols.forEach(function (wc) {
+      var m = lfMark(row[wc.i]);
+      if (m === 'na') { if (p.na.indexOf(wc.wk) < 0) p.na.push(wc.wk); }
+      else if (m) p.weeks[wc.wk] = m;
+    });
+    if (C.mval >= 0) value.media += lfNum(row[C.mval]) || 0;
+    if (C.mkt >= 0) value.market += lfNum(row[C.mkt]) || 0;
+    if (C.bval >= 0) value.bonus += lfNum(row[C.bval]) || 0;
+  }
+  if (C.bought >= 0) {
+    for (var r2 = hr + 1; r2 <= lastPanelRow; r2++) {
+      var b = lfNum((rows[r2] || [])[C.bought]);
+      if (b) { value.bought = b; break; }
+    }
+  }
+  var camp = lfMakeCampaign(order.map(function (id) { return panels[id]; }), {
+    name: lfCleanName(file), source: 'schedule', file: file, sheet: sheetName,
+    value: (value.media || value.bought) ? value : null, move: lfParseMove(XLSX, wb)
+  });
+  return camp;
+}
+
+// MOVE audience summary sheet (label in one cell, value in the next).
+function lfParseMove(XLSX, wb) {
+  var sn = wb.SheetNames.find(function (n) { return /move/i.test(n); });
+  if (!sn) return null;
+  var rows = lfRows(XLSX, wb.Sheets[sn]), out = {}, markets = null;
+  var keys = { 'campaignmarkets': 'markets', 'demographic': 'demo', 'totalpotentials': 'potential', 'campaignreach000s': 'reach',
+    'campaignreach%': 'reachPct', 'campaignfrequency': 'freq', 'campaignimpressions': 'impressions', 'neuroimpactfactornif': 'nif' };
+  rows.forEach(function (row, r) {
+    row = row || [];
+    for (var i = 0; i < row.length; i++) {
+      var k = keys[lfNorm(row[i])];
+      if (k) { for (var j = i + 1; j < row.length; j++) { if (row[j] != null && row[j] !== '') { out[k] = row[j]; break; } } break; }
+    }
+    var cityCols = [];
+    row.forEach(function (v, i) { if (/^(sydney|melbourne|brisbane|adelaide|perth|hobart|canberra|darwin)$/i.test(String(v || '').trim())) cityCols.push(i); });
+    if (cityCols.length >= 2 && !markets) {
+      markets = {};
+      cityCols.forEach(function (i) { markets[String(row[i]).trim()] = {}; });
+      for (var r2 = r + 1; r2 < Math.min(rows.length, r + 8); r2++) {
+        var lab = lfNorm((rows[r2] || []).find(function (v) { return typeof v === 'string'; }));
+        var key = lab === 'potentials' ? 'potential' : lab === 'reach000s' ? 'reach' : lab === 'reach%' ? 'reachPct' : lab === 'averagefrequency' ? 'freq' : lab === 'impressions' ? 'impressions' : null;
+        if (!key) continue;
+        cityCols.forEach(function (i) { markets[String(row[i]).trim()][key] = lfNum((rows[r2] || [])[i]); });
+      }
+    }
+  });
+  if (!Object.keys(out).length && !markets) return null;
+  ['potential', 'reach', 'reachPct', 'freq', 'impressions', 'nif'].forEach(function (k) { if (out[k] != null) out[k] = lfNum(out[k]); });
+  if (markets) out.marketsBy = markets;
+  return out;
+}
+
+// Production specs export (system file from QMS campaign delivery). One row per panel booking.
+function lfParseSpecs(XLSX, wb, file) {
+  var names = wb.SheetNames.filter(function (n) { return /spec/i.test(n); });
+  if (!names.length) names = wb.SheetNames.slice();
+  var panels = {}, order = [], meta = {};
+  var found = false;
+  names.forEach(function (sn) {
+    var rows = lfRows(XLSX, wb.Sheets[sn]), hr = -1;
+    for (var r = 0; r < Math.min(rows.length, 40); r++) {
+      var row = rows[r] || [];
+      var lab = lfNorm(row[0]);
+      if (lab === 'campaignid' && row[1] != null) meta.qmsId = String(row[1]).replace(/^0+/, '');
+      if (lab === 'campaignname' && row[1]) meta.name = String(row[1]).trim();
+      if (row.some(function (v) { return lfNorm(v) === 'panelid'; })) { hr = r; break; }
+    }
+    if (hr < 0) return;
+    found = true;
+    var hdr = rows[hr];
+    var C = {
+      type: lfFindCol(hdr, ['paneltype']), id: lfFindCol(hdr, ['panelid'], true), addr: lfFindCol(hdr, ['address']),
+      suburb: lfFindCol(hdr, ['suburb']), state: lfFindCol(hdr, ['state'], true), pc: lfFindCol(hdr, ['postcode']),
+      start: lfFindCol(hdr, ['startdate']), end: lfFindCol(hdr, ['enddate']), pw: lfFindCol(hdr, ['pixelwidth']),
+      ph: lfFindCol(hdr, ['pixelheight']), btype: lfFindCol(hdr, ['bookingtype']), dur: lfFindCol(hdr, ['slotlength']),
+      sot: lfFindCol(hdr, ['sot%', 'sot', 'shareoftime']), dir: lfFindCol(hdr, ['paneldirection', 'direction']),
+      link: lfFindCol(hdr, ['sitecardlink']), restrict: lfFindCol(hdr, ['contentrestrictions']),
+      nonstd: lfFindCol(hdr, ['nonstandardspecs'])
+    };
+    for (var r3 = hr + 1; r3 < rows.length; r3++) {
+      var row3 = rows[r3] || [];
+      var id = row3[C.id];
+      if (id == null || String(id).trim() === '') continue;
+      id = String(id).trim();
+      var sz = lfSize('', C.pw >= 0 ? row3[C.pw] : 0, C.ph >= 0 ? row3[C.ph] : 0);
+      var p = panels[id];
+      if (!p) {
+        p = panels[id] = {
+          id: id, state: C.state >= 0 ? String(row3[C.state] || '').trim().toUpperCase() : '',
+          addr: C.addr >= 0 ? String(row3[C.addr] || '').trim() : '', suburb: C.suburb >= 0 ? String(row3[C.suburb] || '').trim() : '',
+          pc: C.pc >= 0 && row3[C.pc] != null ? String(row3[C.pc]) : '', dir: C.dir >= 0 ? String(row3[C.dir] || '').trim() : '',
+          type: C.type >= 0 ? String(row3[C.type] || '').trim() : '', px: sz.px, w: sz.w, h: sz.h, size: '',
+          sot: C.sot >= 0 ? lfNum(row3[C.sot]) : null, dur: C.dur >= 0 ? lfNum(row3[C.dur]) : null, illum: '', rate: null,
+          restrict: [C.restrict >= 0 ? row3[C.restrict] : '', C.nonstd >= 0 ? row3[C.nonstd] : ''].filter(Boolean).join('; '),
+          link: C.link >= 0 ? String(row3[C.link] || '') : '', weeks: {}, na: []
+        };
+        order.push(id);
+      }
+      var s = lfDateCell(C.start >= 0 ? row3[C.start] : null), e = lfDateCell(C.end >= 0 ? row3[C.end] : null) || s;
+      var mark = /bonus/i.test(String(C.btype >= 0 ? row3[C.btype] : '')) ? 'b' : 'p';
+      if (s) for (var wk = lfMonday(s); wk <= e; wk = lfAddDays(wk, 7)) p.weeks[wk] = mark;
+    }
+  });
+  if (!found) return null;
+  return lfMakeCampaign(order.map(function (id) { return panels[id]; }), {
+    name: meta.name || lfCleanName(file), qmsId: meta.qmsId || '', source: 'specs', file: file
+  });
+}
+
+function lfMakeCampaign(panels, o) {
+  var weeks = {};
+  panels.forEach(function (p) { Object.keys(p.weeks).forEach(function (w) { weeks[w] = 1; }); });
+  return {
+    id: 'lf' + Date.now().toString(36), name: o.name, owner: 'QMS', qmsId: o.qmsId || '', status: o.source === 'specs' ? 'Booked' : 'Proposed',
+    source: o.source, file: o.file || '', imported: new Date().toISOString().slice(0, 10), value: o.value || null, move: o.move || null,
+    due: '', plan: {}, panels: panels, weeks: Object.keys(weeks).sort()
+  };
+}
+
+function lfParseWorkbook(XLSX, wb, file) {
+  var c = lfParseSpecs(XLSX, wb, file) || lfParseSchedule(XLSX, wb, file);
+  if (!c || !c.panels.length) throw new Error('No QMS panels found. Expecting a QMS client schedule or production specs export.');
+  return c;
+}
+
+// Re-import onto an existing campaign: panels and weeks come from the new file, panel details are merged
+// (a specs export adds restrictions and slot lengths to a schedule's panels), and the creative plan,
+// artwork due date, campaign number and value/audience figures are kept unless the new file has them.
+function lfMergeCampaign(old, nw) {
+  var oldBy = {};
+  old.panels.forEach(function (p) { oldBy[p.id] = p; });
+  var newIds = {};
+  var panels = nw.panels.map(function (p) {
+    newIds[p.id] = 1;
+    var o = oldBy[p.id];
+    if (!o) return p;
+    var m = Object.assign({}, o);
+    Object.keys(p).forEach(function (k) {
+      var v = p[k];
+      if (k === 'weeks' || k === 'na') m[k] = v;
+      else if (v !== '' && v != null) m[k] = v;
+    });
+    return m;
+  });
+  var moved = 0;
+  nw.panels.forEach(function (p) {
+    var o = oldBy[p.id];
+    if (o && JSON.stringify(Object.keys(o.weeks).sort()) !== JSON.stringify(Object.keys(p.weeks).sort())) moved++;
+  });
+  var diff = {
+    added: nw.panels.filter(function (p) { return !oldBy[p.id]; }).map(function (p) { return p.id; }),
+    removed: old.panels.filter(function (p) { return !newIds[p.id]; }).map(function (p) { return p.id; }),
+    moved: moved
+  };
+  var merged = Object.assign({}, old, {
+    panels: panels, weeks: nw.weeks, file: nw.file, imported: nw.imported,
+    qmsId: nw.qmsId || old.qmsId, value: nw.value || old.value, move: nw.move || old.move,
+    status: nw.source === 'specs' ? 'Booked' : old.status, source: nw.source
+  });
+  return { camp: merged, diff: diff };
+}
+
+function lfPanelsSorted(camp) {
+  var stOrder = function (s) { var i = LF_STATES.indexOf(s); return i < 0 ? 99 : i; };
+  var firstWk = function (p) { return Object.keys(p.weeks).sort()[0] || '9999'; };
+  return camp.panels.slice().sort(function (a, b) {
+    return stOrder(a.state) - stOrder(b.state) || (firstWk(a) < firstWk(b) ? -1 : firstWk(a) > firstWk(b) ? 1 : 0) || (a.id < b.id ? -1 : 1);
+  });
+}
+// Creative for a week and state: a state entry overrides the all-states entry.
+function lfConcept(camp, wk, state) {
+  var w = (camp.plan || {})[wk] || {};
+  return String(w[state] || w.ALL || '').trim();
+}
+function lfFileName(camp, concept, px) {
+  var id = String(camp.qmsId || '').replace(/^0+/, '') || 'CAMPAIGNNO';
+  var c = String(concept || '').trim().replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return [id, 'PointsBet', c || 'TBC', px].join('_');
+}
+// Artwork needed: one file per creative per pixel size, with the panels, states and weeks it covers.
+// Due a week before the first Monday it goes live (QMS asks for artwork and MI by then), or the date
+// typed against the campaign for the creative that opens it.
+function lfArtwork(camp) {
+  var by = {}, unassigned = { bookings: 0, weeks: {} };
+  camp.panels.forEach(function (p) {
+    Object.keys(p.weeks).forEach(function (wk) {
+      var c = lfConcept(camp, wk, p.state);
+      if (!c) { unassigned.bookings++; unassigned.weeks[wk] = 1; return; }
+      var k = c + '|' + p.px;
+      var a = by[k] || (by[k] = { concept: c, px: p.px, w: p.w, h: p.h, panels: {}, states: {}, weeks: {} });
+      a.panels[p.id] = 1; a.states[p.state] = 1; a.weeks[wk] = 1;
+    });
+  });
+  // A creative's artwork is all due together, a week before its first live week anywhere.
+  var conceptFirst = {};
+  Object.keys(by).forEach(function (k) {
+    var a = by[k], f = Object.keys(a.weeks).sort()[0];
+    if (!conceptFirst[a.concept] || f < conceptFirst[a.concept]) conceptFirst[a.concept] = f;
+  });
+  var list = Object.keys(by).map(function (k) {
+    var a = by[k], wks = Object.keys(a.weeks).sort();
+    var first = wks[0], cf = conceptFirst[a.concept];
+    var due = camp.due && cf === camp.weeks[0] ? camp.due : lfAddDays(cf, -7);
+    return {
+      concept: a.concept, px: a.px, w: a.w, h: a.h, file: lfFileName(camp, a.concept, a.px),
+      panels: Object.keys(a.panels), states: LF_STATES.filter(function (s) { return a.states[s]; }).concat(Object.keys(a.states).filter(function (s) { return LF_STATES.indexOf(s) < 0; })),
+      weeks: wks, first: first, due: due
+    };
+  });
+  list.forEach(function (a) { a.conceptFirst = conceptFirst[a.concept]; });
+  list.sort(function (x, y) {
+    return x.conceptFirst < y.conceptFirst ? -1 : x.conceptFirst > y.conceptFirst ? 1 : x.concept < y.concept ? -1 : x.concept > y.concept ? 1
+      : (y.panels.length - x.panels.length) || (x.w * x.h > y.w * y.h ? -1 : 1);
+  });
+  return { list: list, unassigned: unassigned };
+}
+// QMS Material Instructions rows: one per panel per run of back-to-back weeks with the same creative.
+function lfMIRows(camp) {
+  var out = [];
+  lfPanelsSorted(camp).forEach(function (p) {
+    var wks = Object.keys(p.weeks).sort(), run = null;
+    wks.forEach(function (wk) {
+      var c = lfConcept(camp, wk, p.state), bt = p.weeks[wk] === 'b' ? 'Bonus' : 'Standard';
+      if (run && run.concept === c && run.booking === bt && lfAddDays(run.lastWk, 7) === wk) { run.lastWk = wk; return; }
+      run = { panel: p, concept: c, booking: bt, firstWk: wk, lastWk: wk };
+      out.push(run);
+    });
+  });
+  return out.map(function (r) {
+    var p = r.panel;
+    return {
+      type: p.type || 'Billboard', id: p.id, addr: p.addr, suburb: p.suburb, state: p.state, pc: p.pc,
+      start: r.firstWk, end: lfAddDays(r.lastWk, 6), sot: p.sot, w: p.w, h: p.h, booking: r.booking,
+      share: r.concept ? 1 : null, file: r.concept ? lfFileName(camp, r.concept, p.px) : 'TBC', concept: r.concept
+    };
+  });
+}
+
+function lfFmt(iso, withYear) {
+  if (!iso) return '';
+  var p = iso.split('-');
+  return p[2] + '/' + p[1] + (withYear ? '/' + p[0].slice(2) : '');
+}
+function lfMoney(n) {
+  if (n == null || isNaN(n)) return '';
+  if (n >= 1e6) return '$' + (n / 1e6).toFixed(2).replace(/\.?0+$/, '') + 'M';
+  if (n >= 1e3) return '$' + Math.round(n / 1e3) + 'k';
+  return '$' + Math.round(n);
+}
+function lfStatesOf(camp) {
+  var s = {};
+  camp.panels.forEach(function (p) { s[p.state] = 1; });
+  return LF_STATES.filter(function (x) { return s[x]; }).concat(Object.keys(s).filter(function (x) { return LF_STATES.indexOf(x) < 0; }));
+}
+var LF_TINTS = [['#fde2e7', '#9f1239'], ['#dbeafe', '#1e3a8a'], ['#d1fae5', '#065f46'], ['#fef3c7', '#92400e'], ['#ede9fe', '#5b21b6'], ['#cffafe', '#155e75'], ['#fce7f3', '#9d174d'], ['#e5e7eb', '#1f2937']];
+function lfConceptList(camp) {
+  var seen = {}, out = [];
+  camp.weeks.forEach(function (wk) {
+    var w = (camp.plan || {})[wk] || {};
+    ['ALL'].concat(LF_STATES).forEach(function (k) { var c = String(w[k] || '').trim(); if (c && !seen[c]) { seen[c] = 1; out.push(c); } });
+  });
+  return out;
+}
+
+// One workbook for QMS: the artwork list, their Material Instructions layout filled in, and the schedule.
+function lfExport(camp, XLSX, zap) {
+  try {
+    var hasStyles = XLSX !== XLSX_NPM;
+    var INK = '1F2937', MID = '4B5563', PAPER = 'F3F4F6', LINE = 'D1D5DB';
+    var thin = { style: 'thin', color: { rgb: LINE } }, box = { top: thin, bottom: thin, left: thin, right: thin };
+    var font = function (bold, color) { return { name: 'Calibri', sz: 11, bold: !!bold, color: { rgb: color || INK } }; };
+    var bg = function (rgb) { return { patternType: 'solid', fgColor: { rgb: rgb } }; };
+    var serial = function (iso) { var p = iso.split('-'); return (Date.UTC(+p[0], +p[1] - 1, +p[2]) - Date.UTC(1899, 11, 30)) / 86400000; };
+    function sheet(rows, widths, merges) {
+      var ws = XLSX.utils.aoa_to_sheet(rows.map(function (r) { return r.map(function (c) { return c && typeof c === 'object' ? (c.v == null ? '' : c.v) : (c == null ? '' : c); }); }));
+      rows.forEach(function (r, ri) {
+        r.forEach(function (c, ci) {
+          var a = XLSX.utils.encode_cell({ r: ri, c: ci });
+          if (!ws[a]) ws[a] = { t: 's', v: '' };
+          var o = c && typeof c === 'object' ? c : {};
+          if (o.date) { ws[a] = { t: 'n', v: serial(o.date), z: 'dd/mm/yyyy' }; }
+          if (o.z) ws[a].z = o.z;
+          if (hasStyles) ws[a].s = { font: font(o.b, o.color), fill: o.fill ? bg(o.fill) : undefined, border: o.box ? box : undefined, alignment: { vertical: 'center', horizontal: o.align, wrapText: !!o.wrap } };
+        });
+      });
+      ws['!cols'] = widths.map(function (w) { return { wch: w }; });
+      if (merges) ws['!merges'] = merges;
+      return ws;
+    }
+    var H = function (t) { return { v: t, b: true, fill: PAPER, box: true }; };
+    var C = function (v, o) { return Object.assign({ v: v, box: true }, o || {}); };
+    var art = lfArtwork(camp), wb = XLSX.utils.book_new();
+    var title = function (t) { return [{ v: t, b: true }]; };
+
+    // Artwork list
+    var ar = [title('QMS Large Format ' + String.fromCharCode(8212) + ' Artwork List'), [camp.name + (camp.qmsId ? ' (#' + camp.qmsId + ')' : '')], [],
+      [H('Creative'), H('Size (px)'), H('File name'), H('Panels'), H('States'), H('First live'), H('Artwork due')]];
+    art.list.forEach(function (a) {
+      ar.push([C(a.concept, { b: true }), C(a.px), C(a.file), C(a.panels.length, { align: 'center' }), C(a.states.join(', ')), C('', { date: a.first, box: true }), C('', { date: a.due, box: true })]);
+    });
+    if (art.unassigned.bookings) ar.push([], [{ v: art.unassigned.bookings + ' panel bookings have no creative yet (' + Object.keys(art.unassigned.weeks).sort().map(function (w) { return 'wc ' + lfFmt(w); }).join(', ') + ')', color: 'C00000', b: true }]);
+    XLSX.utils.book_append_sheet(wb, sheet(ar, [26, 12, 52, 9, 22, 13, 13]), 'Artwork List');
+
+    // Material Instructions in QMS's own column order
+    var mi = lfMIRows(camp), first = camp.weeks[0], last = lfAddDays(camp.weeks[camp.weeks.length - 1], 6);
+    var mr = [title('QMS MEDIA - DIGITAL MATERIAL INSTRUCTIONS'), ['Campaign ID', camp.qmsId || ''], ['Campaign Name', camp.name], ['Client', 'PointsBet'], ['Brand', 'PointsBet'],
+      ['Start Date', { date: first }], ['End Date', { date: last }],
+      ['Panel Type', 'Panel ID', 'Address', 'Suburb', 'State', 'Postcode', 'Start Date', 'End Date', 'SoT %', 'Pixel Width', 'Pixel Height', 'Booking Type', 'Consecutive Location', 'Code', 'Start Time', 'End Time', 'Share %', 'Key Number/File Name'].map(H)];
+    mi.forEach(function (r) {
+      mr.push([C(r.type), C(r.id, { b: true }), C(r.addr), C(r.suburb), C(r.state), C(r.pc), C('', { date: r.start, box: true }), C('', { date: r.end, box: true }),
+        C(r.sot == null ? '' : r.sot, { z: '0%' }), C(r.w || ''), C(r.h || ''), C(r.booking), C(''), C(''), C(''), C(''), C(r.share == null ? '' : r.share, { z: '0%' }),
+        C(r.file, r.concept ? {} : { color: 'C00000', b: true })]);
+    });
+    XLSX.utils.book_append_sheet(wb, sheet(mr, [20, 12, 34, 18, 7, 9, 12, 12, 7, 11, 11, 13, 10, 7, 10, 9, 8, 48]), 'Material Instructions');
+
+    // Schedule: panels down the side, weeks across, creative in each live week
+    var sr = [title('Schedule ' + String.fromCharCode(8212) + ' ' + camp.name), [],
+      [H('State'), H('Panel'), H('Location'), H('Size (px)'), H('Slot (s)')].concat(camp.weeks.map(function (w) { return H('wc ' + lfFmt(w, true)); }))];
+    var concepts = lfConceptList(camp);
+    lfStatesOf(camp).forEach(function (st) {
+      lfPanelsSorted(camp).filter(function (p) { return p.state === st; }).forEach(function (p) {
+        sr.push([C(st), C(p.id, { b: true }), C([p.addr, p.suburb].filter(Boolean).join(', ')), C(p.px), C(p.dur == null ? '' : p.dur, { align: 'center' })].concat(camp.weeks.map(function (w) {
+          var m = p.weeks[w];
+          if (!m) return C('');
+          var c = lfConcept(camp, w, p.state), ix = concepts.indexOf(c);
+          var t = ix >= 0 ? LF_TINTS[ix % LF_TINTS.length] : ['#FFFFFF', '#C00000'];
+          return C((c || 'TBC') + (m === 'b' ? ' (B)' : ''), { fill: t[0].slice(1).toUpperCase(), color: t[1].slice(1).toUpperCase(), b: true, align: 'center' });
+        })));
+      });
+    });
+    XLSX.utils.book_append_sheet(wb, sheet(sr, [7, 12, 40, 11, 8].concat(camp.weeks.map(function () { return 18; }))), 'Schedule');
+
+    var name = 'QMS MI ' + String(camp.name).replace(/^pointsbet\s*[-:]?\s*/i, '').replace(/[\\\/:*?"<>|]+/g, '-') + '.xlsx';
+    var out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    var url = URL.createObjectURL(new Blob([out], { type: 'application/octet-stream' }));
+    var a = document.createElement('a'); a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 150);
+    var warn = [];
+    if (!camp.qmsId) warn.push('no QMS campaign number, file names use CAMPAIGNNO');
+    if (art.unassigned.bookings) warn.push(art.unassigned.bookings + ' bookings have no creative');
+    zap(warn.length ? '✓ QMS MI exported · ⚠ ' + warn.join(' · ') : '✓ QMS MI exported (' + art.list.length + ' artwork files, ' + mi.length + ' MI rows)');
+  } catch (e) { zap('⚠ Export failed: ' + (e && e.message ? e.message : e)); }
+}
+
+function LargeFormat(props) {
+  var h = React.createElement;
+  var camps = props.camps || [], setCamps = props.setCamps, zap = props.zap, getXLSX = props.getXLSX;
+  var stSel = React.useState(camps[0] ? camps[0].id : null), sel = stSel[0], setSel = stSel[1];
+  var stView = React.useState('plan'), view = stView[0], setView = stView[1];
+  var fileRef = React.useRef(null), modeRef = React.useRef('new');
+  var camp = camps.find(function (c) { return c.id === sel; }) || camps[0] || null;
+  var card = { background: '#fff', borderRadius: 12, padding: '14px 16px', marginBottom: 14, boxShadow: '0 1px 4px rgba(17,24,39,.07)' };
+  var lab = { fontSize: 11, fontWeight: 800, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '.05em' };
+  var inp = { border: '1px solid #d1d5db', borderRadius: 6, padding: '4px 8px', fontSize: 12 };
+  var btn = function (bgc, col) { return { background: bgc, color: col || '#fff', border: bgc === '#fff' ? '1px solid #d1d5db' : 'none', borderRadius: 9, padding: '7px 14px', fontSize: 12, fontWeight: 700, cursor: 'pointer' }; };
+  var th = { padding: '6px 8px', fontSize: 11, fontWeight: 800, color: '#374151', background: '#f3f4f6', borderBottom: '1px solid #e5e7eb', textAlign: 'left', whiteSpace: 'nowrap' };
+  var td = { padding: '5px 8px', fontSize: 12, borderBottom: '1px solid #f1f5f9', verticalAlign: 'middle' };
+
+  function update(id, fn) {
+    setCamps(function (prev) { return prev.map(function (c) { return c.id === id ? fn(Object.assign({}, c)) : c; }); });
+  }
+  function pick(mode) { modeRef.current = mode; if (fileRef.current) { fileRef.current.value = ''; fileRef.current.click(); } }
+  function onFile(e) {
+    var f = e.target.files && e.target.files[0];
+    if (!f) return;
+    var reader = new FileReader();
+    reader.onload = function (ev) {
+      try {
+        var XLSX = getXLSX();
+        var wb = XLSX.read(new Uint8Array(ev.target.result), { type: 'array' });
+        var nw = lfParseWorkbook(XLSX, wb, f.name);
+        var target = modeRef.current === 'update' && camp ? camp : camps.find(function (c) { return (nw.qmsId && c.qmsId === nw.qmsId) || c.name === nw.name; });
+        if (target) {
+          var res = lfMergeCampaign(target, nw);
+          res.camp.lastDiff = res.diff;
+          setCamps(function (prev) { return prev.map(function (c) { return c.id === target.id ? res.camp : c; }); });
+          setSel(target.id);
+          zap('✓ ' + target.name + ' updated · ' + res.diff.added.length + ' panels added, ' + res.diff.removed.length + ' removed, ' + res.diff.moved + ' changed weeks');
+        } else {
+          setCamps(function (prev) { return prev.concat([nw]); });
+          setSel(nw.id);
+          zap('✓ Imported ' + nw.name + ' · ' + nw.panels.length + ' panels over ' + nw.weeks.length + ' weeks');
+        }
+      } catch (err) { zap('⚠ ' + (err && err.message ? err.message : 'Could not read that file')); }
+    };
+    reader.readAsArrayBuffer(f);
+  }
+  var hidden = h('input', { ref: fileRef, type: 'file', accept: '.xlsx,.xls', onChange: onFile, style: { display: 'none' } });
+
+  var header = h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, flexWrap: 'wrap' } },
+    h('span', { style: { fontSize: 15, fontWeight: 800, color: '#111827' } }, 'Large format'),
+    h('span', { style: { fontSize: 11, color: '#9ca3af', maxWidth: 560 } }, 'Import a QMS client schedule or the production specs export from the campaign welcome email. Re-import a newer version onto the same campaign to update panels and weeks without losing the creative plan.'),
+    h('button', { onClick: function () { pick('new'); }, style: Object.assign(btn('linear-gradient(90deg,#EE1A42,#c8123a)'), { marginLeft: 'auto' }) }, '+ Import QMS file'), hidden);
+
+  if (!camps.length) {
+    return h('div', null, header, h('div', { style: Object.assign({}, card, { padding: '36px 24px', textAlign: 'center', color: '#4b5563', fontSize: 13, lineHeight: 1.6 }) },
+      h('div', { style: { fontSize: 14, fontWeight: 800, color: '#111827', marginBottom: 6 } }, 'No large format campaigns yet'),
+      'Use ', h('b', null, '+ Import QMS file'), ' with either file QMS sends: the client schedule from sales (weeks marked p and B, with the MOVE summary), or the production specs export (pixel sizes, slot lengths, content restrictions).'));
+  }
+
+  var pills = h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 } }, camps.map(function (c) {
+    var on = camp && c.id === camp.id;
+    return h('button', { key: c.id, onClick: function () { setSel(c.id); }, style: { border: '2px solid ' + (on ? '#EE1A42' : '#e5e7eb'), background: on ? '#fff1f3' : '#fff', borderRadius: 10, padding: '6px 12px', cursor: 'pointer', textAlign: 'left' } },
+      h('div', { style: { fontSize: 12, fontWeight: 800, color: '#111827' } }, c.name),
+      h('div', { style: { fontSize: 10, color: '#6b7280' } }, (c.weeks.length ? lfFmt(c.weeks[0], true) + ' – ' + lfFmt(lfAddDays(c.weeks[c.weeks.length - 1], 6), true) : 'no weeks') + ' · ' + c.panels.length + ' panels · ' + c.status));
+  }));
+
+  var states = lfStatesOf(camp), art = lfArtwork(camp), concepts = lfConceptList(camp);
+  var paid = 0, bonus = 0;
+  camp.panels.forEach(function (p) { Object.keys(p.weeks).forEach(function (w) { if (p.weeks[w] === 'b') bonus++; else paid++; }); });
+  var sizes = {};
+  camp.panels.forEach(function (p) { sizes[p.px] = (sizes[p.px] || 0) + 1; });
+  var nSizes = Object.keys(sizes).length;
+  var oneOff = Object.keys(sizes).filter(function (k) { return sizes[k] === 1; }).length;
+  var defDue = camp.weeks.length ? lfAddDays(camp.weeks[0], -7) : '';
+
+  function stat(label, value, sub) {
+    return h('div', { style: { minWidth: 110 } }, h('div', { style: lab }, label), h('div', { style: { fontSize: 15, fontWeight: 800, color: '#111827', marginTop: 2 } }, value), sub ? h('div', { style: { fontSize: 11, color: '#6b7280' } }, sub) : null);
+  }
+  var mv = camp.move;
+  var summary = h('div', { style: card },
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 } },
+      h('input', { value: camp.name, onChange: function (e) { var v = e.target.value; update(camp.id, function (c) { c.name = v; return c; }); }, style: Object.assign({}, inp, { fontSize: 14, fontWeight: 800, minWidth: 320 }) }),
+      h('span', { style: { fontSize: 12, color: '#6b7280' } }, 'QMS campaign #'),
+      h('input', { value: camp.qmsId || '', placeholder: 'e.g. 38271', onChange: function (e) { var v = e.target.value.replace(/[^0-9]/g, ''); update(camp.id, function (c) { c.qmsId = v; return c; }); }, style: Object.assign({}, inp, { width: 90 }) }),
+      h('select', { value: camp.status, onChange: function (e) { var v = e.target.value; update(camp.id, function (c) { c.status = v; return c; }); }, style: inp }, ['Proposed', 'Booked', 'Live', 'Complete'].map(function (s) { return h('option', { key: s, value: s }, s); })),
+      h('span', { style: { marginLeft: 'auto', display: 'inline-flex', gap: 8 } },
+        h('button', { onClick: function () { pick('update'); }, style: btn('#fff', '#374151'), title: 'Load a newer schedule or the production specs export onto this campaign' }, '↻ Re-import file'),
+        h('button', { onClick: function () { lfExport(camp, getXLSX(), zap); }, style: btn('#1d6f42') }, '↓ Export QMS MI'),
+        h('button', { onClick: function () { if (window.confirm('Delete ' + camp.name + ' from the planner?')) { setCamps(function (prev) { return prev.filter(function (c) { return c.id !== camp.id; }); }); setSel(null); } }, style: btn('#fff', '#9ca3af') }, 'Delete'))),
+    h('div', { style: { display: 'flex', gap: 22, flexWrap: 'wrap', alignItems: 'flex-start' } },
+      stat('Flight', camp.weeks.length ? lfFmt(camp.weeks[0], true) + ' – ' + lfFmt(lfAddDays(camp.weeks[camp.weeks.length - 1], 6), true) : '–', camp.weeks.length + ' weeks'),
+      stat('Panel weeks', paid + bonus, paid + ' paid · ' + bonus + ' bonus'),
+      stat('States', states.join(' · ')),
+      stat('Artwork sizes', nSizes, oneOff + ' used on one panel only'),
+      camp.value ? stat('Media value', lfMoney(camp.value.media), camp.value.bought ? 'bought ' + lfMoney(camp.value.bought) + (camp.value.bonus ? ' · bonus ' + lfMoney(camp.value.bonus) : '') : null) : null,
+      mv && mv.reachPct != null ? stat('MOVE reach', Math.round(mv.reachPct * 1000) / 10 + '%', (mv.freq ? 'freq ' + mv.freq.toFixed(1) + ' · ' : '') + (mv.impressions ? (mv.impressions / 1e6).toFixed(1) + 'M impressions' : '') + (mv.demo ? ' · ' + mv.demo : '')) : null,
+      h('div', null, h('div', { style: lab }, 'Artwork & MI due'),
+        h('input', { type: 'date', value: camp.due || '', onChange: function (e) { var v = e.target.value; update(camp.id, function (c) { c.due = v; return c; }); }, style: Object.assign({}, inp, { marginTop: 3 }) }),
+        !camp.due && defDue ? h('div', { style: { fontSize: 11, color: '#6b7280' } }, 'assumed Mon ' + lfFmt(defDue, true) + ', from QMS’s welcome email') : null)));
+
+  // flags
+  var flags = [];
+  if (!camp.qmsId) flags.push('No QMS campaign number yet, so file names use CAMPAIGNNO. It’s in the welcome email subject (e.g. #38271), or re-import the production specs export.');
+  if (art.unassigned.bookings) flags.push(art.unassigned.bookings + ' panel bookings have no creative (' + Object.keys(art.unassigned.weeks).sort().map(function (w) { return 'wc ' + lfFmt(w); }).join(', ') + ').');
+  var restricted = camp.panels.filter(function (p) { return p.restrict; });
+  if (restricted.length) flags.push('Content restrictions: ' + restricted.map(function (p) { return p.id + ' (' + p.restrict + ')'; }).join('; '));
+  var oneAdv = camp.panels.filter(function (p) { return /one advertiser|only/i.test(p.illum || ''); });
+  if (oneAdv.length) flags.push('Restricted times: ' + oneAdv.map(function (p) { return p.id + ' ' + p.suburb + ' (' + p.illum + ')'; }).join('; '));
+  if (camp.status === 'Proposed') flags.push('This is a proposal schedule. QMS holds nothing until a contract is issued, and pricing has a two-week sunset.');
+  if (camp.lastDiff && (camp.lastDiff.added.length || camp.lastDiff.removed.length || camp.lastDiff.moved)) {
+    var d = camp.lastDiff;
+    flags.push('Last re-import: ' + (d.added.length ? d.added.length + ' added (' + d.added.slice(0, 6).join(', ') + (d.added.length > 6 ? '…' : '') + ') ' : '') + (d.removed.length ? d.removed.length + ' removed (' + d.removed.slice(0, 6).join(', ') + (d.removed.length > 6 ? '…' : '') + ') ' : '') + (d.moved ? d.moved + ' panels changed weeks' : ''));
+  }
+  var flagBox = flags.length ? h('div', { style: Object.assign({}, card, { background: '#fffbeb', border: '1px solid #fde68a', boxShadow: 'none' }) },
+    h('div', { style: Object.assign({}, lab, { color: '#92400e', marginBottom: 6 }) }, 'Check'),
+    flags.map(function (f, i) { return h('div', { key: i, style: { fontSize: 12, color: '#78350f', marginBottom: 4, lineHeight: 1.45 } }, '• ' + f); })) : null;
+
+  var tabs = h('div', { style: { display: 'flex', borderBottom: '2px solid #e5e7eb', marginBottom: 14 } }, [['plan', 'Creative plan & artwork'], ['schedule', 'Schedule']].map(function (t) {
+    var on = view === t[0];
+    return h('button', { key: t[0], onClick: function () { setView(t[0]); }, style: { padding: '7px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, fontWeight: on ? 800 : 500, color: on ? '#EE1A42' : '#374151', borderBottom: on ? '2px solid #EE1A42' : '2px solid transparent', marginBottom: -2 } }, t[1]);
+  }));
+
+  // per week x state live counts
+  function liveCount(wk, st) {
+    var p = 0, b = 0;
+    camp.panels.forEach(function (x) { if ((!st || x.state === st) && x.weeks[wk]) { if (x.weeks[wk] === 'b') b++; else p++; } });
+    return { p: p, b: b };
+  }
+  function setPlan(wk, key, v) {
+    update(camp.id, function (c) {
+      var plan = Object.assign({}, c.plan || {}); var w = Object.assign({}, plan[wk] || {});
+      if (v) w[key] = v; else delete w[key];
+      plan[wk] = w; c.plan = plan; return c;
+    });
+  }
+  function fillAll(v) {
+    update(camp.id, function (c) {
+      var plan = Object.assign({}, c.plan || {});
+      c.weeks.forEach(function (wk) { var w = Object.assign({}, plan[wk] || {}); w.ALL = v; plan[wk] = w; });
+      c.plan = plan; return c;
+    });
+  }
+  var dl = h('datalist', { id: 'lf-concepts-' + camp.id }, concepts.map(function (c) { return h('option', { key: c, value: c }); }));
+  var planTable = h('div', { style: card },
+    h('div', { style: Object.assign({}, lab, { marginBottom: 4 }) }, 'Creative by week'),
+    h('div', { style: { fontSize: 11, color: '#6b7280', marginBottom: 10 } }, 'Type the creative running each week. A state box overrides all states for that week. Paid + bonus panels live are shown under each state.'),
+    dl,
+    h('div', { style: { overflowX: 'auto' } }, h('table', { style: { borderCollapse: 'collapse', width: '100%' } },
+      h('thead', null, h('tr', null, h('th', { style: th }, 'Week'), h('th', { style: th }, 'All states'), states.map(function (s) { return h('th', { key: s, style: th }, s); }))),
+      h('tbody', null, camp.weeks.map(function (wk, wi) {
+        var w = (camp.plan || {})[wk] || {}, tot = liveCount(wk);
+        return h('tr', { key: wk },
+          h('td', { style: Object.assign({}, td, { whiteSpace: 'nowrap' }) }, h('div', { style: { fontWeight: 800 } }, 'wc ' + lfFmt(wk, true)), h('div', { style: { fontSize: 10, color: '#6b7280' } }, (tot.p + tot.b) + ((tot.p + tot.b) === 1 ? ' panel' : ' panels'))),
+          h('td', { style: td }, h('div', { style: { display: 'flex', gap: 4, alignItems: 'center' } },
+            h('input', { list: 'lf-concepts-' + camp.id, value: w.ALL || '', placeholder: 'creative', onChange: function (e) { setPlan(wk, 'ALL', e.target.value); }, style: Object.assign({}, inp, { width: 170 }) }),
+            wi === 0 && w.ALL ? h('button', { onClick: function () { fillAll(w.ALL); }, title: 'Use this creative for every week', style: { border: 'none', background: 'none', color: '#2563eb', fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap' } }, '↓ all weeks') : null)),
+          states.map(function (s) {
+            var n = liveCount(wk, s);
+            return h('td', { key: s, style: td },
+              n.p + n.b ? h('input', { list: 'lf-concepts-' + camp.id, value: w[s] || '', placeholder: w.ALL || '–', onChange: function (e) { setPlan(wk, s, e.target.value); }, style: Object.assign({}, inp, { width: 120, color: w[s] ? '#111827' : '#6b7280' }) }) : h('span', { style: { color: '#d1d5db' } }, '–'),
+              n.p + n.b ? h('div', { style: { fontSize: 10, color: '#6b7280', marginTop: 2 } }, [n.p ? n.p + ' paid' : '', n.b ? n.b + ' bonus' : ''].filter(Boolean).join(' + ')) : null);
+          }));
+      })))));
+
+  var artTable = h('div', { style: card },
+    h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 8 } },
+      h('span', { style: lab }, 'Artwork needed'),
+      h('span', { style: { fontSize: 11, color: '#6b7280' } }, art.list.length + ' files' + (art.unassigned.bookings ? ' · ' + art.unassigned.bookings + ' bookings still need a creative' : '') + ' · named in QMS’s format (campaign_brand_creative_size)')),
+    art.list.length ? h('div', { style: { overflowX: 'auto' } }, h('table', { style: { borderCollapse: 'collapse', width: '100%' } },
+      h('thead', null, h('tr', null, ['Creative', 'Size (px)', 'Panels', 'States', 'First live', 'Due', 'File name'].map(function (t) { return h('th', { key: t, style: th }, t); }))),
+      h('tbody', null, art.list.map(function (a, i) {
+        var ix = concepts.indexOf(a.concept), t = LF_TINTS[(ix < 0 ? 7 : ix) % LF_TINTS.length];
+        return h('tr', { key: a.file + i },
+          h('td', { style: td }, h('span', { style: { background: t[0], color: t[1], fontWeight: 700, borderRadius: 6, padding: '2px 8px', fontSize: 11 } }, a.concept)),
+          h('td', { style: Object.assign({}, td, { fontWeight: 700 }) }, a.px),
+          h('td', { style: Object.assign({}, td, { textAlign: 'center' }) }, a.panels.length),
+          h('td', { style: td }, a.states.join(', ')),
+          h('td', { style: td }, 'wc ' + lfFmt(a.first)),
+          h('td', { style: Object.assign({}, td, { color: a.due < new Date().toISOString().slice(0, 10) ? '#b91c1c' : '#111827', fontWeight: 700 }) }, lfFmt(a.due, true)),
+          h('td', { style: Object.assign({}, td, { fontFamily: 'ui-monospace,Menlo,monospace', fontSize: 11 }) }, a.file));
+      })))) : h('div', { style: { fontSize: 12, color: '#6b7280' } }, 'Add a creative to a week above and the files you need appear here, one per creative per pixel size.'));
+
+  // schedule grid
+  var stBlocks = states.map(function (st) {
+    var ps = lfPanelsSorted(camp).filter(function (p) { return p.state === st; });
+    return [h('tr', { key: st + '-h' },
+      h('td', { colSpan: 5, style: Object.assign({}, td, { background: '#f9fafb', fontWeight: 800 }) }, st + ' · ' + ps.length + (ps.length === 1 ? ' panel' : ' panels')),
+      camp.weeks.map(function (wk) { var n = liveCount(wk, st); return h('td', { key: wk, style: Object.assign({}, td, { background: '#f9fafb', textAlign: 'center', fontSize: 11, color: '#6b7280' }) }, n.p + n.b || ''); }))]
+      .concat(ps.map(function (p) {
+        return h('tr', { key: p.id },
+          h('td', { style: Object.assign({}, td, { fontWeight: 700, whiteSpace: 'nowrap' }) }, p.link ? h('a', { href: p.link, target: '_blank', rel: 'noreferrer', style: { color: '#111827' } }, p.id) : p.id),
+          h('td', { style: Object.assign({}, td, { maxWidth: 260 }) }, h('div', { style: { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, [p.addr, p.suburb].filter(Boolean).join(', '))),
+          h('td', { style: Object.assign({}, td, { whiteSpace: 'nowrap' }) }, p.px),
+          h('td', { style: Object.assign({}, td, { textAlign: 'center' }) }, p.dur == null ? '' : p.dur + 's'),
+          h('td', { style: Object.assign({}, td, { fontSize: 11, color: '#6b7280', whiteSpace: 'nowrap' }) }, p.illum && !/^all day$/i.test(p.illum) ? p.illum.replace(/\s+One Advertiser Only\.?/i, ' (one advertiser)') : ''),
+          camp.weeks.map(function (wk) {
+            var m = p.weeks[wk];
+            if (!m) return h('td', { key: wk, style: Object.assign({}, td, { textAlign: 'center', color: '#e5e7eb' }) }, p.na.indexOf(wk) >= 0 ? 'n/a' : '');
+            var c = lfConcept(camp, wk, p.state), ix = concepts.indexOf(c), t = ix >= 0 ? LF_TINTS[ix % LF_TINTS.length] : ['#fff', '#b91c1c'];
+            return h('td', { key: wk, title: (c || 'No creative yet') + (m === 'b' ? ' (bonus)' : ''), style: Object.assign({}, td, { textAlign: 'center', background: t[0], color: t[1], fontWeight: 800, fontSize: 11, border: ix < 0 ? '1px dashed #fca5a5' : undefined }) }, m === 'b' ? 'B' : 'P');
+          }));
+      }));
+  });
+  var legend = h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10, fontSize: 11, color: '#6b7280' } },
+    'P = paid, B = bonus.',
+    concepts.map(function (c, i) { var t = LF_TINTS[i % LF_TINTS.length]; return h('span', { key: c, style: { background: t[0], color: t[1], fontWeight: 700, borderRadius: 6, padding: '2px 8px' } }, c); }),
+    h('span', { style: { border: '1px dashed #fca5a5', color: '#b91c1c', borderRadius: 6, padding: '1px 7px', fontWeight: 700 } }, 'no creative yet'));
+  var grid = h('div', { style: card }, legend, h('div', { style: { overflowX: 'auto' } }, h('table', { style: { borderCollapse: 'collapse', width: '100%' } },
+    h('thead', null, h('tr', null, ['Panel', 'Location', 'Size (px)', 'Slot', 'Hours'].map(function (t) { return h('th', { key: t, style: th }, t); }),
+      camp.weeks.map(function (wk) { return h('th', { key: wk, style: Object.assign({}, th, { textAlign: 'center' }) }, 'wc ' + lfFmt(wk)); }))),
+    h('tbody', null, stBlocks))));
+
+  return h('div', null, header, pills, summary, flagBox, tabs, view === 'plan' ? h('div', null, planTable, artTable) : grid);
+}
+
+// ---- 7-Eleven (QMS The Convenience Network, programmatic) ----
+// Always on, but only inside set time windows. Creative can change by day, window and market, so a week
+// is planned as day -> window -> market -> rotation, with an all-markets rotation that a market can override.
+// QMS weeks run Monday to Sunday; artwork and MI go to production@qmsmedia.com the Monday before.
+var TCN_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+var TCN_SIZE = { w: 1080, h: 1920, px: '1080x1920' };
+var TCN_DEFAULT = {
+  qmsId: '',
+  markets: ['NSW', 'VIC', 'QLD', 'SA', 'WA'],
+  windows: [
+    { id: 'am', days: [0, 1, 2, 3, 4], from: '04:00', to: '08:00' },
+    { id: 'thfr', days: [3, 4], from: '19:00', to: '22:00' },
+    { id: 'satam', days: [5], from: '06:00', to: '08:00' },
+    { id: 'wkpm', days: [5, 6], from: '16:00', to: '24:00' }
+  ],
+  weeks: {}
+};
+function tcnTime(t) {
+  if (t === '24:00' || t === '00:00') return t === '24:00' ? 'midnight' : '12am';
+  var p = String(t || '').split(':'), h = parseInt(p[0], 10), m = p[1] || '00';
+  if (isNaN(h)) return '';
+  var ap = h >= 12 ? 'pm' : 'am', hh = h % 12 === 0 ? 12 : h % 12;
+  return hh + (m !== '00' ? ':' + m : '') + ap;
+}
+function tcnWinLabel(w) { return tcnTime(w.from) + '–' + tcnTime(w.to); }
+function tcnDaysLabel(days) {
+  var d = days.slice().sort(function (a, b) { return a - b; }), out = [], i = 0;
+  while (i < d.length) {
+    var j = i;
+    while (j + 1 < d.length && d[j + 1] === d[j] + 1) j++;
+    out.push(j > i ? TCN_DAYS[d[i]] + '–' + TCN_DAYS[d[j]] : TCN_DAYS[d[i]]);
+    i = j + 1;
+  }
+  return out.join(', ');
+}
+function tcnMonday(iso) {
+  var d = new Date(iso + 'T00:00:00Z'); var wd = (d.getUTCDay() + 6) % 7; d.setUTCDate(d.getUTCDate() - wd); return d.toISOString().slice(0, 10);
+}
+function tcnAddDays(iso, n) { var d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+function tcnCell(tcn, wk, d, wid) { return (((tcn.weeks || {})[wk] || {})[d] || {})[wid] || {}; }
+// Rotation running in one market: its own entries if it has an override, otherwise the all-markets ones.
+function tcnRot(tcn, wk, d, wid, mkt) {
+  var c = tcnCell(tcn, wk, d, wid);
+  var e = (mkt && c[mkt]) ? c[mkt] : (c.ALL || []);
+  return e.filter(function (x) { return String(x.c || '').trim() && (parseFloat(x.s) || 0) > 0; });
+}
+function tcnSig(entries) {
+  return entries.map(function (x) { return String(x.c).trim() + ':' + (parseFloat(x.s) || 0); }).sort().join('|');
+}
+function tcnWindowsSorted(tcn) {
+  return (tcn.windows || []).slice().sort(function (a, b) {
+    var da = Math.min.apply(null, a.days.length ? a.days : [9]), db = Math.min.apply(null, b.days.length ? b.days : [9]);
+    return (da - db) || (a.from < b.from ? -1 : a.from > b.from ? 1 : 0);
+  });
+}
+// Columns for the grid and MI: per window, back-to-back days with identical rotations in every market
+// share a column; markets only split out where their rotation differs.
+function tcnColumns(tcn, wk) {
+  var cols = [], gaps = [];
+  tcnWindowsSorted(tcn).forEach(function (w) {
+    var days = w.days.slice().sort(function (a, b) { return a - b; });
+    var runs = [];
+    days.forEach(function (d) {
+      var map = {};
+      tcn.markets.forEach(function (m) { map[m] = tcnSig(tcnRot(tcn, wk, d, w.id, m)); });
+      var key = JSON.stringify(map), last = runs[runs.length - 1];
+      if (last && last.key === key && last.days[last.days.length - 1] === d - 1) last.days.push(d);
+      else runs.push({ key: key, map: map, days: [d] });
+    });
+    runs.forEach(function (r) {
+      var groups = [];
+      tcn.markets.forEach(function (m) {
+        var g = groups.find(function (x) { return x.sig === r.map[m]; });
+        if (g) g.markets.push(m); else groups.push({ sig: r.map[m], markets: [m] });
+      });
+      groups.forEach(function (g) {
+        if (!g.sig) { gaps.push(tcnDaysLabel(r.days) + ' ' + tcnWinLabel(w) + ' ' + g.markets.join('/')); return; }
+        var rot = {};
+        tcnRot(tcn, wk, r.days[0], w.id, g.markets[0]).forEach(function (x) { rot[String(x.c).trim()] = (rot[String(x.c).trim()] || 0) + (parseFloat(x.s) || 0); });
+        cols.push({
+          win: w, days: r.days, markets: g.markets, all: g.markets.length === tcn.markets.length,
+          time: tcnWinLabel(w), dayLabel: tcnDaysLabel(r.days),
+          marketLabel: g.markets.length === tcn.markets.length ? 'All markets' : g.markets.join(' + '),
+          rot: rot
+        });
+      });
+    });
+  });
+  return { cols: cols, gaps: gaps };
+}
+function tcnFile(tcn, creative) {
+  var id = String(tcn.qmsId || '').replace(/^0+/, '') || 'CAMPAIGNNO';
+  var c = String(creative || '').trim().replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return [id, 'PointsBet', c || 'TBC', TCN_SIZE.px].join('_');
+}
+function tcnRound(rot) { return typeof usRound5 === 'function' ? usRound5(rot, function (k) { return k; }) : rot; }
+// QMS MI rows: one per column per creative, with dates, times and market.
+function tcnMIRows(tcn, wk) {
+  var out = [];
+  tcnColumns(tcn, wk).cols.forEach(function (col) {
+    var r = tcnRound(col.rot);
+    Object.keys(r).sort(function (a, b) { return (parseFloat(r[b]) - parseFloat(r[a])) || (a < b ? -1 : 1); }).forEach(function (c) {
+      out.push({
+        state: col.all ? 'All markets' : col.markets.join(', '), start: tcnAddDays(wk, col.days[0]), end: tcnAddDays(wk, col.days[col.days.length - 1]),
+        from: col.win.from, to: col.win.to === '24:00' ? '23:59' : col.win.to, days: col.dayLabel,
+        share: parseFloat(r[c]) / 100, creative: c, file: tcnFile(tcn, c)
+      });
+    });
+  });
+  return out;
+}
+function tcnCreatives(tcn, wk) {
+  var seen = {}, out = [];
+  tcnColumns(tcn, wk).cols.forEach(function (col) {
+    Object.keys(col.rot).forEach(function (c) {
+      if (!seen[c]) { seen[c] = { creative: c, file: tcnFile(tcn, c), slots: [], where: [] }; out.push(seen[c]); }
+      var k = col.dayLabel + ' ' + col.time, slot = seen[c].slots.find(function (x) { return x.k === k; });
+      if (!slot) { slot = { k: k, markets: [] }; seen[c].slots.push(slot); }
+      col.markets.forEach(function (m) { if (slot.markets.indexOf(m) < 0) slot.markets.push(m); });
+    });
+  });
+  out.forEach(function (o) {
+    o.where = o.slots.map(function (sl) {
+      var all = sl.markets.length === tcn.markets.length;
+      return sl.k + (all ? '' : ' (' + tcn.markets.filter(function (m) { return sl.markets.indexOf(m) >= 0; }).join(', ') + ')');
+    });
+  });
+  return out;
+}
+// Opening a week with nothing planned copies the most recent earlier week.
+function tcnCarry(tcn, wk) {
+  if ((tcn.weeks || {})[wk]) return null;
+  var prev = Object.keys(tcn.weeks || {}).filter(function (k) { return k < wk; }).sort();
+  if (!prev.length) return null;
+  return JSON.parse(JSON.stringify(tcn.weeks[prev[prev.length - 1]]));
+}
+
+function tcnFmt(iso, yr) { if (!iso) return ''; var p = iso.split('-'); return p[2] + '/' + p[1] + (yr ? '/' + p[0] : ''); }
+function tcnAllCreatives(tcn) {
+  var seen = {}, out = [];
+  Object.keys(tcn.weeks || {}).sort().reverse().forEach(function (wk) {
+    var w = tcn.weeks[wk] || {};
+    Object.keys(w).forEach(function (d) { Object.keys(w[d] || {}).forEach(function (wid) { Object.keys(w[d][wid] || {}).forEach(function (m) {
+      (w[d][wid][m] || []).forEach(function (x) { var c = String(x.c || '').trim(); if (c && !seen[c]) { seen[c] = 1; out.push(c); } });
+    }); }); });
+  });
+  return out;
+}
+
+// Workbook for QMS: the one-page grid, their MI template with dates, times and markets, and the artwork list.
+function tcnExport(tcn, wk, XLSX, zap) {
+  try {
+    var hasStyles = XLSX !== XLSX_NPM;
+    var INK = '1F2937', MID = '4B5563', PAPER = 'F3F4F6', LINE = 'D1D5DB';
+    var thin = { style: 'thin', color: { rgb: LINE } }, box = { top: thin, bottom: thin, left: thin, right: thin };
+    var serial = function (iso) { var p = iso.split('-'); return (Date.UTC(+p[0], +p[1] - 1, +p[2]) - Date.UTC(1899, 11, 30)) / 86400000; };
+    function sheet(rows, widths, merges, heights) {
+      var ws = XLSX.utils.aoa_to_sheet(rows.map(function (r) { return r.map(function (c) { return c && typeof c === 'object' ? (c.v == null ? '' : c.v) : (c == null ? '' : c); }); }));
+      rows.forEach(function (r, ri) {
+        r.forEach(function (c, ci) {
+          var a = XLSX.utils.encode_cell({ r: ri, c: ci });
+          if (!ws[a]) ws[a] = { t: 's', v: '' };
+          var o = c && typeof c === 'object' ? c : {};
+          if (o.date) ws[a] = { t: 'n', v: serial(o.date), z: 'dd/mm/yyyy' };
+          if (o.z) ws[a].z = o.z;
+          if (hasStyles) ws[a].s = { font: { name: 'Calibri', sz: 11, bold: !!o.b, color: { rgb: o.color || INK } }, fill: o.fill ? { patternType: 'solid', fgColor: { rgb: o.fill } } : undefined, border: o.box ? box : undefined, alignment: { vertical: 'center', horizontal: o.align, wrapText: !!o.wrap } };
+        });
+      });
+      ws['!cols'] = widths.map(function (w) { return { wch: w }; });
+      if (merges) ws['!merges'] = merges;
+      if (heights) ws['!rows'] = heights;
+      return ws;
+    }
+    var res = tcnColumns(tcn, wk), cols = res.cols;
+    if (!cols.length) { zap('⚠ Nothing planned for wc ' + tcnFmt(wk) + ' yet'); return; }
+    var due = tcnAddDays(wk, -7), wb = XLSX.utils.book_new();
+
+    // Instructions: windows across, creatives down, each column adds to 100%
+    var rounded = cols.map(function (c) { return tcnRound(c.rot); });
+    var creatives = [];
+    cols.forEach(function (c) { Object.keys(c.rot).forEach(function (k) { if (creatives.indexOf(k) < 0) creatives.push(k); }); });
+    var n = cols.length, rows = [], merges = [];
+    rows.push([{ v: '7-Eleven Material Instructions ' + String.fromCharCode(8212) + ' WC ' + tcnFmt(wk, true) + ' (Mon' + String.fromCharCode(8211) + 'Sun)', b: true }]);
+    rows.push([{ v: 'QMS The Convenience Network · ' + TCN_SIZE.px + ' portrait · JPEG or MP4 up to 10s · artwork and MI to production@qmsmedia.com by Mon ' + tcnFmt(due, true) }]);
+    rows.push([]);
+    var h1 = [{ v: 'KEY / FILE NAME', b: true, fill: PAPER, box: true }, { v: 'CREATIVE', b: true, fill: PAPER, box: true }];
+    var h2 = [{ v: '', fill: PAPER, box: true }, { v: '', fill: PAPER, box: true }];
+    merges.push({ s: { r: 3, c: 0 }, e: { r: 4, c: 0 } }, { s: { r: 3, c: 1 }, e: { r: 4, c: 1 } });
+    var start = 2;
+    cols.forEach(function (c, i) {
+      var sameAsPrev = i > 0 && cols[i - 1].win.id === c.win.id;
+      h1.push({ v: sameAsPrev ? '' : c.time, b: true, color: 'FFFFFF', fill: MID, box: true, align: 'center' });
+      h2.push({ v: c.dayLabel + (c.all ? '' : '\n' + c.marketLabel), b: true, fill: PAPER, box: true, align: 'center', wrap: true });
+      var last = i === n - 1 || cols[i + 1].win.id !== c.win.id;
+      if (last) { if (2 + i > start) merges.push({ s: { r: 3, c: start }, e: { r: 3, c: 2 + i } }); start = 3 + i; }
+    });
+    rows.push(h1, h2);
+    creatives.forEach(function (k) {
+      rows.push([{ v: tcnFile(tcn, k), b: true, box: true }, { v: k, box: true }].concat(rounded.map(function (r) {
+        return r[k] != null ? { v: r[k] + '%', b: true, box: true, align: 'center' } : { v: String.fromCharCode(8211), color: '9CA3AF', box: true, align: 'center' };
+      })));
+    });
+    rows.push([{ v: '' }, { v: 'Total', b: true, color: MID, align: 'right' }].concat(rounded.map(function (r) {
+      var t = Object.keys(r).reduce(function (s, k) { return s + parseFloat(r[k]); }, 0);
+      return { v: t + '%', b: true, color: t === 100 ? MID : 'C00000', align: 'center' };
+    })));
+    var heights = []; heights[4] = { hpt: 32 };
+    XLSX.utils.book_append_sheet(wb, sheet(rows, [42, 26].concat(cols.map(function () { return 15; })), merges, heights), 'Instructions');
+
+    // QMS Material Instructions template
+    var H = function (t) { return { v: t, b: true, fill: PAPER, box: true }; };
+    var mr = [[{ v: 'QMS MEDIA - DIGITAL MATERIAL INSTRUCTIONS', b: true }], ['Campaign ID', tcn.qmsId || ''], ['Campaign Name', 'PointsBet - The Convenience Network (7-Eleven)'],
+      ['Client', 'PointsBet'], ['Brand', 'PointsBet'], ['Start Date', { date: wk }], ['End Date', { date: tcnAddDays(wk, 6) }],
+      ['Panel Type', 'Panel ID', 'Address', 'Suburb', 'State', 'Postcode', 'Start Date', 'End Date', 'SoT %', 'Pixel Width', 'Pixel Height', 'Booking Type', 'Consecutive Location', 'Code', 'Start Time', 'End Time', 'Share %', 'Key Number/File Name'].map(H)];
+    tcnMIRows(tcn, wk).forEach(function (r) {
+      var B = function (v, o) { return Object.assign({ v: v, box: true }, o || {}); };
+      mr.push([B('The Convenience Network'), B(''), B(''), B(''), B(r.state, { b: true }), B(''), B('', { date: r.start }), B('', { date: r.end }), B(''), B(TCN_SIZE.w), B(TCN_SIZE.h),
+        B('Programmatic'), B(''), B(''), B(r.from), B(r.to), B(r.share, { z: '0%' }), B(r.file)]);
+    });
+    XLSX.utils.book_append_sheet(wb, sheet(mr, [24, 9, 9, 9, 22, 9, 12, 12, 7, 11, 11, 13, 10, 7, 10, 9, 8, 46]), 'Material Instructions');
+
+    // Artwork
+    var ar = [[{ v: '7-Eleven artwork ' + String.fromCharCode(8212) + ' WC ' + tcnFmt(wk, true), b: true }], [],
+      [H('Creative'), H('File name'), H('Size'), H('Format'), H('Runs'), H('Due')]];
+    tcnCreatives(tcn, wk).forEach(function (c) {
+      ar.push([{ v: c.creative, b: true, box: true }, { v: c.file, box: true }, { v: TCN_SIZE.px + ' portrait', box: true }, { v: 'JPEG, or MP4 up to 10s', box: true },
+        { v: c.where.join('; '), box: true, wrap: true }, { v: '', date: due, box: true }]);
+    });
+    XLSX.utils.book_append_sheet(wb, sheet(ar, [26, 46, 18, 22, 60, 12]), 'Artwork');
+
+    var name = '7-Eleven MI WC' + wk + '.xlsx';
+    var out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    var url = URL.createObjectURL(new Blob([out], { type: 'application/octet-stream' }));
+    var a = document.createElement('a'); a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 150);
+    var warn = [];
+    if (!tcn.qmsId) warn.push('no QMS campaign number, file names use CAMPAIGNNO');
+    if (res.gaps.length) warn.push('no creative for ' + res.gaps.join('; '));
+    zap(warn.length ? '✓ 7-Eleven MI exported · ⚠ ' + warn.join(' · ') : '✓ 7-Eleven MI exported (' + cols.length + ' columns)');
+  } catch (e) { zap('⚠ Export failed: ' + (e && e.message ? e.message : e)); }
+}
+
+function SevenEleven(props) {
+  var h = React.createElement;
+  var tcn = props.tcn || TCN_DEFAULT, setTcn = props.setTcn, zap = props.zap, getXLSX = props.getXLSX;
+  var today = new Date(), todayISO = today.getFullYear() + '-' + ('0' + (today.getMonth() + 1)).slice(-2) + '-' + ('0' + today.getDate()).slice(-2);
+  var stWk = React.useState(tcnAddDays(tcnMonday(todayISO), 7)), wk = stWk[0], setWk = stWk[1];
+  var stDay = React.useState(0), day = stDay[0], setDay = stDay[1];
+  var stSet = React.useState(false), showSet = stSet[0], setShowSet = stSet[1];
+  var nWeeks = Object.keys(tcn.weeks || {}).length;
+  React.useEffect(function () {
+    var c = tcnCarry(tcn, wk);
+    if (c) setTcn(function (p) { var w = Object.assign({}, p.weeks || {}); if (w[wk]) return p; w[wk] = c; return Object.assign({}, p, { weeks: w }); });
+  }, [wk, nWeeks]);
+
+  var card = { background: '#fff', borderRadius: 12, padding: '14px 16px', marginBottom: 14, boxShadow: '0 1px 4px rgba(17,24,39,.07)' };
+  var lab = { fontSize: 11, fontWeight: 800, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '.05em' };
+  var inp = { border: '1px solid #d1d5db', borderRadius: 6, padding: '3px 6px', fontSize: 12 };
+  var th = { padding: '6px 8px', fontSize: 11, fontWeight: 800, color: '#374151', background: '#f3f4f6', borderBottom: '1px solid #e5e7eb', textAlign: 'left', whiteSpace: 'nowrap' };
+  var td = { padding: '6px 8px', fontSize: 12, borderBottom: '1px solid #f1f5f9', verticalAlign: 'top' };
+  var link = { border: 'none', background: 'none', color: '#2563eb', fontSize: 11, cursor: 'pointer', padding: '2px 0' };
+  var listId = 'tcn-creatives';
+
+  function upd(fn) { setTcn(function (p) { var n = JSON.parse(JSON.stringify(p || TCN_DEFAULT)); fn(n); return n; }); }
+  function setCell(d, wid, mkt, entries) {
+    upd(function (n) {
+      n.weeks = n.weeks || {}; var w = n.weeks[wk] = n.weeks[wk] || {}; var dd = w[d] = w[d] || {}; var c = dd[wid] = dd[wid] || {};
+      if (entries == null) delete c[mkt]; else c[mkt] = entries;
+    });
+  }
+  function copyDay(from, targets) {
+    upd(function (n) {
+      var w = n.weeks[wk] = n.weeks[wk] || {};
+      targets.forEach(function (t) { if (t !== from) w[t] = JSON.parse(JSON.stringify(w[from] || {})); });
+    });
+    zap('✓ ' + TCN_DAYS[from] + ' copied to ' + targets.filter(function (t) { return t !== from; }).map(function (t) { return TCN_DAYS[t]; }).join(', '));
+  }
+  function evenSplit(n) { var out = [], base = Math.floor(100 / n / 5) * 5; for (var i = 0; i < n; i++) out.push(base); out[0] += 100 - base * n; return out; }
+
+  function RotCell(o) {
+    var entries = o.entries, inherited = o.inherited;
+    if (entries == null && inherited) {
+      var names = inherited.filter(function (x) { return String(x.c || '').trim(); });
+      return h('div', null,
+        h('div', { style: { fontSize: 11, color: '#9ca3af' } }, names.length ? names.map(function (x) { return x.c + (inherited.length > 1 ? ' ' + x.s + '%' : ''); }).join(', ') : '–'),
+        h('button', { style: link, onClick: function () { o.onChange(names.length ? JSON.parse(JSON.stringify(names)) : [{ c: '', s: 100 }]); } }, 'change for ' + o.mkt));
+    }
+    var list = entries && entries.length ? entries : [{ c: '', s: 100 }];
+    var total = list.reduce(function (t, x) { return t + (parseFloat(x.s) || 0); }, 0);
+    return h('div', null,
+      list.map(function (x, i) {
+        return h('div', { key: i, style: { display: 'flex', gap: 4, alignItems: 'center', marginBottom: 3 } },
+          h('input', { list: listId, value: x.c, placeholder: 'creative', onChange: function (e) { var l = JSON.parse(JSON.stringify(list)); l[i].c = e.target.value; o.onChange(l); }, style: Object.assign({}, inp, { width: 132 }) }),
+          list.length > 1 ? h('input', { type: 'number', min: 0, max: 100, step: 5, value: x.s, onChange: function (e) { var l = JSON.parse(JSON.stringify(list)); l[i].s = e.target.value === '' ? '' : Number(e.target.value); o.onChange(l); }, style: Object.assign({}, inp, { width: 46 }) }) : null,
+          list.length > 1 ? h('span', { style: { fontSize: 11, color: '#6b7280' } }, '%') : null,
+          list.length > 1 ? h('button', { style: Object.assign({}, link, { color: '#9ca3af' }), title: 'Remove', onClick: function () { var l = list.filter(function (_, j) { return j !== i; }); if (l.length === 1) l[0].s = 100; o.onChange(l); } }, '×') : null);
+      }),
+      h('div', { style: { display: 'flex', gap: 10, alignItems: 'center' } },
+        h('button', { style: link, onClick: function () { var l = JSON.parse(JSON.stringify(list)).concat([{ c: '', s: 0 }]); var sp = evenSplit(l.length); l.forEach(function (y, j) { y.s = sp[j]; }); o.onChange(l); } }, '+ split'),
+        o.mkt !== 'ALL' ? h('button', { style: Object.assign({}, link, { color: '#6b7280' }), onClick: function () { o.onChange(null); } }, '↺ same as all') : null,
+        list.length > 1 && total !== 100 ? h('span', { style: { fontSize: 11, color: '#b91c1c', fontWeight: 700 } }, total + '%') : null));
+  }
+
+  // header
+  var header = h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, flexWrap: 'wrap' } },
+    h('span', { style: { fontSize: 15, fontWeight: 800, color: '#111827' } }, '7-Eleven'),
+    h('span', { style: { fontSize: 11, color: '#9ca3af' } }, 'QMS The Convenience Network · programmatic · ' + TCN_SIZE.px + ' portrait'),
+    h('span', { style: { marginLeft: 16, fontSize: 13, fontWeight: 600 } }, 'Week commencing'),
+    h('button', { onClick: function () { setWk(tcnAddDays(wk, -7)); }, style: Object.assign({}, inp, { cursor: 'pointer' }) }, '‹'),
+    h('input', { type: 'date', value: wk, onChange: function (e) { if (e.target.value) setWk(tcnMonday(e.target.value)); }, style: Object.assign({}, inp, { padding: '5px 8px', fontSize: 13 }) }),
+    h('button', { onClick: function () { setWk(tcnAddDays(wk, 7)); }, style: Object.assign({}, inp, { cursor: 'pointer' }) }, '›'),
+    h('span', { style: { fontSize: 11, color: '#6b7280' } }, 'Mon ' + tcnFmt(wk) + ' – Sun ' + tcnFmt(tcnAddDays(wk, 6)) + ' · artwork & MI due Mon ' + tcnFmt(tcnAddDays(wk, -7), true)),
+    h('button', { onClick: function () { tcnExport(tcn, wk, getXLSX(), zap); }, style: { marginLeft: 'auto', background: '#1d6f42', color: '#fff', border: 'none', borderRadius: 9, padding: '8px 16px', fontSize: 13, fontWeight: 800, cursor: 'pointer' } }, '↓ Export 7-Eleven MI'));
+
+  // settings: windows + markets + campaign number
+  var times = []; for (var hh = 0; hh <= 24; hh++) { ['00', '30'].forEach(function (mm) { if (hh === 24 && mm === '30') return; times.push(('0' + hh).slice(-2) + ':' + mm); }); }
+  var settings = h('div', { style: card },
+    h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
+      h('span', { style: lab }, 'Time windows'),
+      h('span', { style: { fontSize: 12, color: '#374151' } }, tcnWindowsSorted(tcn).map(function (w) { return tcnDaysLabel(w.days) + ' ' + tcnWinLabel(w); }).join(' · ')),
+      h('span', { style: Object.assign({}, lab, { marginLeft: 12 }) }, 'Markets'),
+      h('span', { style: { fontSize: 12, color: '#374151' } }, tcn.markets.join(' · ')),
+      h('button', { onClick: function () { setShowSet(!showSet); }, style: Object.assign({}, link, { marginLeft: 'auto', fontSize: 12 }) }, showSet ? 'Done' : 'Edit windows & markets')),
+    showSet ? h('div', { style: { marginTop: 12, borderTop: '1px solid #f1f5f9', paddingTop: 12 } },
+      tcn.windows.map(function (w, wi) {
+        return h('div', { key: w.id, style: { display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6, flexWrap: 'wrap' } },
+          TCN_DAYS.map(function (dl, di) {
+            var on = w.days.indexOf(di) >= 0;
+            return h('button', { key: dl, onClick: function () { upd(function (n) { var ww = n.windows[wi]; ww.days = on ? ww.days.filter(function (x) { return x !== di; }) : ww.days.concat([di]).sort(); }); },
+              style: { border: '1px solid ' + (on ? '#EE1A42' : '#d1d5db'), background: on ? '#EE1A42' : '#fff', color: on ? '#fff' : '#374151', borderRadius: 14, padding: '3px 9px', fontSize: 11, fontWeight: 700, cursor: 'pointer' } }, dl);
+          }),
+          h('select', { value: w.from, onChange: function (e) { var v = e.target.value; upd(function (n) { n.windows[wi].from = v; }); }, style: inp }, times.filter(function (t) { return t !== '24:00'; }).map(function (t) { return h('option', { key: t, value: t }, tcnTime(t)); })),
+          h('span', { style: { fontSize: 12 } }, 'to'),
+          h('select', { value: w.to, onChange: function (e) { var v = e.target.value; upd(function (n) { n.windows[wi].to = v; }); }, style: inp }, times.filter(function (t) { return t !== '00:00'; }).map(function (t) { return h('option', { key: t, value: t }, tcnTime(t)); })),
+          h('button', { onClick: function () { upd(function (n) { n.windows.splice(wi, 1); }); }, style: Object.assign({}, link, { color: '#9ca3af' }) }, 'remove'));
+      }),
+      h('button', { onClick: function () { upd(function (n) { n.windows.push({ id: 'w' + Date.now().toString(36), days: [], from: '18:00', to: '22:00' }); }); }, style: link }, '+ Add window'),
+      h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' } },
+        h('span', { style: { fontSize: 12, color: '#374151', marginRight: 4 } }, 'Markets in the buy:'),
+        LF_STATES.map(function (m) {
+          var on = tcn.markets.indexOf(m) >= 0;
+          return h('button', { key: m, onClick: function () { upd(function (n) { n.markets = on ? n.markets.filter(function (x) { return x !== m; }) : LF_STATES.filter(function (x) { return x === m || n.markets.indexOf(x) >= 0; }); }); },
+            style: { border: '1px solid ' + (on ? '#111827' : '#d1d5db'), background: on ? '#111827' : '#fff', color: on ? '#fff' : '#374151', borderRadius: 14, padding: '3px 9px', fontSize: 11, fontWeight: 700, cursor: 'pointer' } }, m);
+        }),
+        h('span', { style: { fontSize: 12, color: '#374151', marginLeft: 16 } }, 'QMS campaign #'),
+        h('input', { value: tcn.qmsId || '', placeholder: 'for file names', onChange: function (e) { var v = e.target.value.replace(/[^0-9]/g, ''); upd(function (n) { n.qmsId = v; }); }, style: Object.assign({}, inp, { width: 110 }) })),
+      h('div', { style: { fontSize: 11, color: '#9ca3af', marginTop: 8 } }, 'Window changes apply to every week. Untick a day to take a window off it.')) : null);
+
+  // day tabs
+  var dayTabs = h('div', { style: { display: 'flex', borderBottom: '2px solid #e5e7eb', marginBottom: 12, flexWrap: 'wrap', alignItems: 'flex-end' } },
+    TCN_DAYS.map(function (dl, di) {
+      var sel = day === di, has = tcn.windows.some(function (w) { return w.days.indexOf(di) >= 0; });
+      return h('button', { key: dl, onClick: function () { setDay(di); }, style: { padding: '6px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 12, fontWeight: sel ? 700 : 400, color: sel ? '#EE1A42' : has ? '#374151' : '#cbd5e1', borderBottom: sel ? '2px solid #EE1A42' : '2px solid transparent', marginBottom: -2, lineHeight: 1.3 } },
+        dl, h('br'), h('span', { style: { fontSize: 10, color: '#6b7280' } }, tcnFmt(tcnAddDays(wk, di))));
+    }),
+    h('span', { style: { marginLeft: 'auto', display: 'inline-flex', gap: 6, alignItems: 'center', paddingBottom: 6 } },
+      h('span', { style: { fontSize: 11, color: '#9ca3af' } }, 'Copy ' + TCN_DAYS[day] + ' to:'),
+      h('select', { value: '', onChange: function (e) {
+          var v = e.target.value; if (!v) return;
+          copyDay(day, v === 'wkdays' ? [0, 1, 2, 3, 4] : v === 'all' ? [0, 1, 2, 3, 4, 5, 6] : v === 'wkend' ? [5, 6] : [parseInt(v, 10)]);
+          e.target.value = '';
+        }, style: inp },
+        [h('option', { key: '', value: '' }, '— choose —'), h('option', { key: 'wkdays', value: 'wkdays' }, 'Mon–Fri'), h('option', { key: 'wkend', value: 'wkend' }, 'Sat–Sun'), h('option', { key: 'all', value: 'all' }, 'every day')]
+          .concat(TCN_DAYS.map(function (dl, di) { return di === day ? null : h('option', { key: dl, value: String(di) }, dl); })))));
+
+  var dayWins = tcnWindowsSorted(tcn).filter(function (w) { return w.days.indexOf(day) >= 0; });
+  var dl = h('datalist', { id: listId }, tcnAllCreatives(tcn).map(function (c) { return h('option', { key: c, value: c }); }));
+  var editor = h('div', { style: card }, dl,
+    h('div', { style: Object.assign({}, lab, { marginBottom: 4 }) }, TCN_DAYS[day] + ' ' + tcnFmt(tcnAddDays(wk, day), true)),
+    h('div', { style: { fontSize: 11, color: '#6b7280', marginBottom: 10 } }, 'Set the creative for all markets, then change any state that runs something different. Use + split to run two creatives in one window.'),
+    dayWins.length ? h('div', { style: { overflowX: 'auto' } }, h('table', { style: { borderCollapse: 'collapse', width: '100%' } },
+      h('thead', null, h('tr', null, h('th', { style: th }, 'Window'), h('th', { style: th }, 'All markets'), tcn.markets.map(function (m) { return h('th', { key: m, style: th }, m); }))),
+      h('tbody', null, dayWins.map(function (w) {
+        var cell = tcnCell(tcn, wk, day, w.id);
+        return h('tr', { key: w.id },
+          h('td', { style: Object.assign({}, td, { fontWeight: 800, whiteSpace: 'nowrap' }) }, tcnWinLabel(w)),
+          h('td', { style: Object.assign({}, td, { background: '#fafafa' }) }, RotCell({ mkt: 'ALL', entries: cell.ALL || [], onChange: function (l) { setCell(day, w.id, 'ALL', l); } })),
+          tcn.markets.map(function (m) {
+            return h('td', { key: m, style: td }, RotCell({ mkt: m, entries: cell[m] || null, inherited: cell.ALL || [], onChange: function (l) { setCell(day, w.id, m, l); } }));
+          }));
+      })))) : h('div', { style: { fontSize: 12, color: '#6b7280' } }, '7-Eleven doesn’t run on ' + TCN_DAYS[day] + '. Add a window under Edit windows & markets.'));
+
+  // preview of what QMS receives
+  var res = tcnColumns(tcn, wk);
+  var rounded = res.cols.map(function (c) { return tcnRound(c.rot); });
+  var crs = [];
+  res.cols.forEach(function (c) { Object.keys(c.rot).forEach(function (k) { if (crs.indexOf(k) < 0) crs.push(k); }); });
+  var preview = h('div', { style: card },
+    h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 8, flexWrap: 'wrap' } },
+      h('span', { style: lab }, 'What QMS gets for the week'),
+      h('span', { style: { fontSize: 11, color: '#6b7280' } }, res.cols.length + ' columns. Days and markets with the same creative share a column, and every % is rounded to 5.')),
+    res.gaps.length ? h('div', { style: { fontSize: 12, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '6px 10px', marginBottom: 8 } }, 'No creative yet: ' + res.gaps.join(' · ')) : null,
+    res.cols.length ? h('div', { style: { overflowX: 'auto' } }, h('table', { style: { borderCollapse: 'collapse' } },
+      h('thead', null,
+        h('tr', null, h('th', { style: th }, 'Creative'), res.cols.map(function (c, i) {
+          var same = i > 0 && res.cols[i - 1].win.id === c.win.id;
+          return h('th', { key: i, style: Object.assign({}, th, { background: '#4b5563', color: '#fff', textAlign: 'center', borderLeft: same ? 'none' : '2px solid #fff' }) }, same ? '' : c.time);
+        })),
+        h('tr', null, h('th', { style: th }, ''), res.cols.map(function (c, i) {
+          return h('th', { key: i, style: Object.assign({}, th, { textAlign: 'center', whiteSpace: 'normal', minWidth: 90 }) }, c.dayLabel, c.all ? null : h('div', { style: { fontWeight: 600, color: '#6b7280' } }, c.marketLabel));
+        }))),
+      h('tbody', null, crs.map(function (k) {
+        return h('tr', { key: k }, h('td', { style: Object.assign({}, td, { fontWeight: 700, whiteSpace: 'nowrap' }) }, k, h('div', { style: { fontFamily: 'ui-monospace,Menlo,monospace', fontSize: 10, color: '#6b7280', fontWeight: 400 } }, tcnFile(tcn, k))),
+          rounded.map(function (r, i) { return h('td', { key: i, style: Object.assign({}, td, { textAlign: 'center', fontWeight: r[k] != null ? 800 : 400, color: r[k] != null ? '#111827' : '#d1d5db' }) }, r[k] != null ? r[k] + '%' : '–'); }));
+      })))) : h('div', { style: { fontSize: 12, color: '#6b7280' } }, 'Nothing planned for this week yet.'));
+
+  return h('div', null, header, settings, dayTabs, editor, preview);
+}
+
 function App() {
   var stTab = useState('library'),
     tab = stTab[0],
@@ -2435,6 +3516,12 @@ function App() {
   var stSnaps = useState({}),
     snaps = stSnaps[0],
     setSnaps = stSnaps[1];
+  var stLF = useState([]),
+    lfCamps = stLF[0],
+    setLfCamps = stLF[1];
+  var stTcn = useState(JSON.parse(JSON.stringify(TCN_DEFAULT))),
+    tcn = stTcn[0],
+    setTcn = stTcn[1];
   var stViewSnap = useState(null),
     viewSnap = stViewSnap[0],
     setViewSnap = stViewSnap[1];
@@ -2592,6 +3679,8 @@ function App() {
           var rUS1 = await window.storage.get('mi2_usmi').catch(function(){return null;}); if(rUS1&&rUS1.value){try{setUsMI(JSON.parse(rUS1.value));}catch(e){}}
           var rUS2 = await window.storage.get('mi2_uson').catch(function(){return null;}); if(rUS2&&rUS2.value){try{setUsOn(JSON.parse(rUS2.value));}catch(e){}}
           var rUS3 = await window.storage.get('mi2_ussplit').catch(function(){return null;}); if(rUS3&&rUS3.value){try{setUsSplit(JSON.parse(rUS3.value));}catch(e){}}
+          var rLF = await window.storage.get('mi2_lf').catch(function(){return null;}); if(rLF&&rLF.value){try{setLfCamps(JSON.parse(rLF.value));}catch(e){}}
+          var rTC = await window.storage.get('mi2_tcn').catch(function(){return null;}); if(rTC&&rTC.value){try{setTcn(JSON.parse(rTC.value));}catch(e){}}
           var r7 = await window.storage.get('mi_rdcmi').catch(function () {
             return null;
           });
@@ -2649,7 +3738,13 @@ function App() {
   }, [usOn, loaded]);
   useEffect(function () {
     if (loaded) window.storage.set('mi2_ussplit', JSON.stringify(usSplit)).catch(function () {});
-  }, [snaps, loaded]);
+  }, [usSplit, loaded]);
+  useEffect(function () {
+    if (loaded) window.storage.set('mi2_lf', JSON.stringify(lfCamps)).catch(function () {});
+  }, [lfCamps, loaded]);
+  useEffect(function () {
+    if (loaded) window.storage.set('mi2_tcn', JSON.stringify(tcn)).catch(function () {});
+  }, [tcn, loaded]);
   useEffect(function () {
     if (loaded) window.storage.set('mi_emails2', JSON.stringify(emailConfig)).catch(function () {});
   }, [emailConfig, loaded]);
@@ -4214,6 +5309,8 @@ function App() {
       sentMap: sentMap,
       dueOv: dueOv,
       snaps: snaps,
+      lf: lfCamps,
+      tcn: tcn,
       wc: wc,
       platform: platform
     };
@@ -4247,6 +5344,11 @@ function App() {
         if (d.dueOv) setDueOv(d.dueOv);
         if (d.emails) setEmailConfig(Object.assign({}, DEFAULT_EMAILS, d.emails));
         if (d.rdcMI) setRdcMI(d.rdcMI);
+        if (d.usMI) setUsMI(d.usMI);
+        if (d.usOn) setUsOn(d.usOn);
+        if (d.usSplit) setUsSplit(d.usSplit);
+        if (d.lf) setLfCamps(d.lf);
+        if (d.tcn) setTcn(d.tcn);
         if (d.wc) setWC(snapToSunday(d.wc));
         if (d.platform) setPlatform(d.platform);
         zap('\u2713 Backup restored');
@@ -4265,7 +5367,12 @@ function App() {
       sentMap: sentMap,
       dueOv: dueOv,
       emails: emailConfig,
-      snaps: snaps
+      snaps: snaps,
+      usMI: usMI,
+      usOn: usOn,
+      usSplit: usSplit,
+      lf: lfCamps,
+      tcn: tcn
     };
   }
   function crePayload() {
@@ -4281,9 +5388,13 @@ function App() {
     if (d.notes) setAllNotes(wrapWeek(d.notes));
     if (d.snaps) setSnaps(d.snaps);
     if (d.rdcMI) setRdcMI(d.rdcMI);
-    if (d.usMI) setUsMI(d.usMI);
-    if (d.usOn) setUsOn(d.usOn);
-    if (d.usSplit) setUsSplit(d.usSplit);
+    // Only take ESPN and large format data from the cloud when it has some, so a device that has never
+    // held any can't wipe another device's copy the first time they both sync.
+    if (d.usMI && Object.keys(d.usMI).length) setUsMI(d.usMI);
+    if (d.usOn && Object.keys(d.usOn).length) setUsOn(d.usOn);
+    if (d.usSplit && Object.keys(d.usSplit).length) setUsSplit(d.usSplit);
+    if (d.lf && d.lf.length) setLfCamps(d.lf);
+    if (d.tcn && d.tcn.windows && Object.keys(d.tcn.weeks || {}).length) setTcn(d.tcn);
     if (d.sentMap) setSentMap(d.sentMap);
     if (d.dueOv) setDueOv(d.dueOv);
     if (d.emails) setEmailConfig(Object.assign({}, DEFAULT_EMAILS, d.emails));
@@ -4400,7 +5511,7 @@ function App() {
     return function () {
       if (syncRef.current.mainTimer) clearTimeout(syncRef.current.mainTimer);
     };
-  }, [allRots, allNotes, rdcMI, usMI, usOn, usSplit, sentMap, dueOv, emailConfig, snaps, loaded]);
+  }, [allRots, allNotes, rdcMI, usMI, usOn, usSplit, lfCamps, tcn, sentMap, dueOv, emailConfig, snaps, loaded]);
   // Debounced push — creatives (separate channel so agency key-adds can't collide with rotation edits)
   useEffect(function () {
     if (!loaded || !syncRef.current.ready) return;
@@ -4658,7 +5769,7 @@ function App() {
       color: '#9aa0b5',
       marginTop: 3
     }
-  }, "Material Instructions · TV · Radio · RDC · ", creatives.length, " creatives")), flash && /*#__PURE__*/React.createElement("div", {
+  }, "Material Instructions · TV · Radio · RDC · Large Format · 7-Eleven · ", creatives.length, " creatives")), flash && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 12,
       color: '#0c0e1a',
@@ -4680,7 +5791,7 @@ function App() {
       padding: '8px 10px',
       boxShadow: '0 1px 4px rgba(17,24,39,.07)'
     }
-  }, [['library', '🎬 Creative Library'], ['foxfooty', '🏈 Fox Footy'], ['ussports', '🏈 ESPN'], ['rdcmi', '📡 RDC'], ['radio', '📻 Radio']].map(function (item) {
+  }, [['library', '🎬 Creative Library'], ['foxfooty', '🏈 Fox Footy'], ['ussports', '🏈 ESPN'], ['rdcmi', '📡 RDC'], ['radio', '📻 Radio'], ['outdoor', '🪧 Large Format'], ['seven', '🏪 7-Eleven']].map(function (item) {
     return /*#__PURE__*/React.createElement("button", {
       key: item[0],
       onClick: function () {
@@ -4753,6 +5864,10 @@ function App() {
     usPct: usPct, setUsPctWithPair: setUsPctWithPair, usPoolTotal: usPoolTotal,
     usCopyBucket: usCopyBucket, usCopyDay: usCopyDay, usCopySection: usCopySection,
     usCreativesFor: usCreativesFor, exportUsXLSX: exportUsXLSX
+  }), tab === 'outdoor' && /*#__PURE__*/React.createElement(LargeFormat, {
+    camps: lfCamps, setCamps: setLfCamps, zap: zap, getXLSX: getXLSX
+  }), tab === 'seven' && /*#__PURE__*/React.createElement(SevenEleven, {
+    tcn: tcn, setTcn: setTcn, zap: zap, getXLSX: getXLSX
   }), tab === 'send' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
