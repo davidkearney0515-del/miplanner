@@ -1,8 +1,199 @@
+// ---- Pointsbet theme ----
+// The planner was written for a light page. Rather than edit every style by hand, every element's style is
+// recoloured as it is created: dark surfaces that step up (no shadows), white text (no grey text anywhere),
+// Calibri, nothing under 14px, no italics, brand red only for the active tab and urgent things, orange for
+// the main action. Status colours keep their hue but move to the bright versions that read on dark.
 (function () {
+  var FONT = "Calibri, Carlito, 'Segoe UI', Arial, sans-serif";
+  var ORANGE = '#ff7812', RED = '#ed1b42', AMBER = '#ffb500', GREEN = '#7ed321', BLUE = '#29b8ff', PURPLE = '#a33eff';
+  var SURF1 = '#0a0a0a', SURF2 = '#1c1c1c', SURF3 = '#333333';
+  var TINT = {
+    amber: 'rgba(255,181,0,.16)', green: 'rgba(126,211,33,.16)', red: 'rgba(255,120,18,.18)', blue: 'rgba(41,184,255,.16)',
+    purple: 'rgba(163,62,255,.18)', neutral: SURF3
+  };
+  var ACCENT = { amber: AMBER, green: GREEN, red: ORANGE, blue: BLUE, purple: PURPLE };
+  var cache = {};
+  function parse(c) {
+    if (typeof c !== 'string') return null;
+    c = c.trim().toLowerCase();
+    if (cache[c]) return cache[c];
+    var r = null, m;
+    if ((m = /^#([0-9a-f]{3})$/.exec(c))) r = [parseInt(m[1][0] + m[1][0], 16), parseInt(m[1][1] + m[1][1], 16), parseInt(m[1][2] + m[1][2], 16), 1];
+    else if ((m = /^#([0-9a-f]{6})([0-9a-f]{2})?$/.exec(c))) r = [parseInt(m[1].slice(0, 2), 16), parseInt(m[1].slice(2, 4), 16), parseInt(m[1].slice(4, 6), 16), m[2] ? parseInt(m[2], 16) / 255 : 1];
+    else if ((m = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)$/.exec(c))) r = [+m[1], +m[2], +m[3], m[4] == null ? 1 : +m[4]];
+    else if (c === 'white') r = [255, 255, 255, 1];
+    else if (c === 'black') r = [0, 0, 0, 1];
+    if (r) cache[c] = r;
+    return r;
+  }
+  function lin(v) { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }
+  function lum(p) { return 0.2126 * lin(p[0]) + 0.7152 * lin(p[1]) + 0.0722 * lin(p[2]); }
+  // How far a colour is from grey, 0 to 255. The tailwind greys the planner was written with (#111827, #6b7280...) read as slightly blue, so they are told apart from real hues by this, not by HSV saturation.
+  function chroma(p) { return Math.max(p[0], p[1], p[2]) - Math.min(p[0], p[1], p[2]); }
+  function hueName(p) {
+    var r = p[0] / 255, g = p[1] / 255, b = p[2] / 255, mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn, h;
+    if (d === 0) return 'neutral';
+    if (mx === r) h = ((g - b) / d) % 6; else if (mx === g) h = (b - r) / d + 2; else h = (r - g) / d + 4;
+    h = Math.round(h * 60); if (h < 0) h += 360;
+    if (h >= 345 || h < 15) return 'red';
+    if (h < 56) return 'amber';
+    if (h < 171) return 'green';
+    if (h < 251) return 'blue';
+    return 'purple';
+  }
+  var BRAND = { '#ee1a42': 1, '#ed1b42': 1, '#c8123a': 1, '#c8102e': 1 };
+  var SELECTED_FILL = { '#111827': 1, '#374151': 1, '#1f2937': 1 };
+  var ACTION_FILL = { '#1d4ed8': 1, '#059669': 1, '#1d6f42': 1, '#0369a1': 1, '#2563eb': 1, '#f59e0b': 1, '#ee1a42': 1, '#c8123a': 1, '#0c7c59': 1 };
+
+  // Text: always white or a bright status colour, never grey.
+  function textColour(c) {
+    var p = parse(c); if (!p) return c;
+    var k = String(c).trim().toLowerCase();
+    if (BRAND[k]) return RED;
+    if (chroma(p) < 50) return '#fff';
+    if (p[3] < 0.5) return c;
+    if (lum(p) < 0.45) return ACCENT[hueName(p)] || '#fff';
+    return c;
+  }
+  // Surfaces: light fills become dark surfaces or a translucent tint of their own hue.
+  function fillColour(c) {
+    var p = parse(c); if (!p) return c;
+    var k = String(c).trim().toLowerCase();
+    if (k === '#fff' || k === '#ffffff') return SURF2;
+    if (p[3] < 0.5) return c;
+    var L = lum(p);
+    if (L > 0.55) {
+      if (chroma(p) < 12) return L > 0.88 ? SURF1 : SURF3;
+      return TINT[hueName(p)] || SURF3;
+    }
+    if (chroma(p) < 50 && !(p[0] === p[1] && p[1] === p[2]) && L > 0.003) return SURF3;
+    return c;
+  }
+  function lineColour(c) {
+    var p = parse(c); if (!p) return c;
+    if (p[3] < 0.5) return c;
+    var L = lum(p), k = String(c).trim().toLowerCase();
+    if (BRAND[k]) return RED;
+    if (chroma(p) < 30) return L > 0.05 ? 'rgba(255,255,255,.25)' : c;
+    if (L > 0.55) { var q = ACCENT[hueName(p)]; var a = parse(q || '#ffffff'); return 'rgba(' + a[0] + ',' + a[1] + ',' + a[2] + ',.5)'; }
+    return c;
+  }
+  function inStr(str, fn) { return String(str).replace(/#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)/g, function (m) { return fn(m); }); }
+  function px(v) { return typeof v === 'number' ? v : (typeof v === 'string' && /^[\d.]+px$/.test(v) ? parseFloat(v) : null); }
+  function size(n) { return n <= 13 ? 14 : n === 14 ? 15 : n === 15 ? 16 : n === 16 ? 18 : n + 3; }
+  function radius(n) { return n >= 18 ? 9999 : n >= 7 ? 8 : n > 0 ? 4 : n; }
+
+  var memo = typeof WeakMap === 'function' ? new WeakMap() : null;
+  function themeStyle(type, st) {
+    var o = {}, k, v;
+    for (k in st) o[k] = st[k];
+    var isBtn = type === 'button' || type === 'label' || type === 'a';
+    var field = type === 'input' || type === 'select' || type === 'textarea';
+    // fonts
+    if ('fontFamily' in o) o.fontFamily = FONT;
+    if (o.fontStyle === 'italic') o.fontStyle = 'normal';
+    if (typeof o.fontWeight === 'number' || /^\d+$/.test(String(o.fontWeight || ''))) o.fontWeight = +o.fontWeight >= 600 ? 700 : 400;
+    var fs = px(o.fontSize); if (fs != null) o.fontSize = size(fs);
+    if (typeof o.letterSpacing === 'number' ? o.letterSpacing < 0 : /^-/.test(String(o.letterSpacing || ''))) o.letterSpacing = 0;
+    if ('boxShadow' in o) {
+      var bs = String(o.boxShadow);
+      o.boxShadow = /^0 0 0 1px/.test(bs) ? '0 0 0 1px rgba(255,255,255,.25)' : 'none';
+    }
+    // Dimming text makes it grey, so nothing is dimmed: past and empty states are told apart by their content.
+    if (o.opacity != null && +o.opacity < 1) o.opacity = 1;
+    var br = px(o.borderRadius); if (br != null) o.borderRadius = radius(br);
+    // fills
+    var filled = null;
+    ['backgroundColor', 'background'].forEach(function (key) {
+      var val = o[key]; if (typeof val !== 'string') return;
+      var low = val.trim().toLowerCase();
+      if (/gradient/.test(low)) {
+        var first = (low.match(/#[0-9a-f]{3,8}\b|rgba?\([^)]*\)/) || [''])[0];
+        var fk = first.toLowerCase();
+        if (isBtn && (ACTION_FILL[fk] || BRAND[fk])) { o[key] = ORANGE; filled = 'action'; }
+        else o[key] = fillColour(first) || SURF2;
+        return;
+      }
+      if (!parse(low) && !/^#/.test(low)) return;
+      if (isBtn && ACTION_FILL[low]) { o[key] = ORANGE; filled = 'action'; return; }
+      if (isBtn && SELECTED_FILL[low]) { o[key] = '#fff'; filled = 'selected'; return; }
+      var f = fillColour(val);
+      if (isBtn && f === SURF2) f = 'rgba(255,255,255,.1)';
+      o[key] = f;
+    });
+    if (field && o.backgroundColor !== 'transparent' && o.background !== 'transparent' && (o.backgroundColor || o.background)) { o.backgroundColor = SURF3; delete o.background; }
+    // text
+    if (typeof o.color === 'string') o.color = textColour(o.color);
+    if (filled) o.color = '#000';
+    if (o.fill && typeof o.fill === 'string' && /^#/.test(o.fill)) o.fill = textColour(o.fill);
+    // lines
+    ['border', 'borderTop', 'borderBottom', 'borderLeft', 'borderRight', 'outline'].forEach(function (key) {
+      if (typeof o[key] === 'string' && /#|rgb/.test(o[key])) o[key] = inStr(o[key], lineColour);
+    });
+    ['borderColor', 'borderTopColor', 'borderBottomColor', 'borderLeftColor', 'borderRightColor'].forEach(function (key) {
+      if (typeof o[key] === 'string') o[key] = lineColour(o[key]);
+    });
+    if (field) { if (o.color == null) o.color = '#fff'; }
+    return o;
+  }
+  // The brand look has no emoji, so any that the planner puts in its labels are dropped (symbols like the warning sign stay).
+  var EMOJI = /[\u{1F300}-\u{1FAFF}\u{1F000}-\u{1F2FF}\uFE0F\u200D]\s?/gu;
+  function noEmoji(v) {
+    if (typeof v === 'string') return v.replace(EMOJI, '');
+    if (Array.isArray(v)) { var ch = false, r = v.map(function (x) { var y = typeof x === 'string' ? noEmoji(x) : x; if (y !== x) ch = true; return y; }); return ch ? r : v; }
+    return v;
+  }
+  var orig = React.createElement;
+  React.createElement = function (type, props) {
+    if (typeof type === 'string' && arguments.length > 2) {
+      var a2 = Array.prototype.slice.call(arguments), ch2 = false;
+      for (var i = 2; i < a2.length; i++) { var y = noEmoji(a2[i]); if (y !== a2[i]) { a2[i] = y; ch2 = true; } }
+      if (ch2) return React.createElement.apply(React, a2);
+    }
+    if (props && props.style && typeof props.style === 'object' && typeof type === 'string') {
+      var st = props.style, t;
+      if (memo && memo.has(st) && memo.get(st).type === type) t = memo.get(st).out;
+      else { t = themeStyle(type, st); if (memo) memo.set(st, { type: type, out: t }); }
+      var np = {}; for (var k in props) np[k] = props[k]; np.style = t;
+      var args = Array.prototype.slice.call(arguments); args[1] = np;
+      return orig.apply(React, args);
+    }
+    return orig.apply(React, arguments);
+  };
+
   var css = document.createElement('style');
-  css.textContent = ["@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');", "html,body{background:linear-gradient(180deg,#f6f7fb 0%,#eef0f6 100%) !important;min-height:100vh;}", "body,button,input,select,textarea{font-family:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif !important;}", "button{transition:all .15s ease;border-radius:8px !important;}", "button:hover{filter:brightness(1.06);transform:translateY(-1px);box-shadow:0 3px 10px rgba(17,24,39,.10);}", "button:active{transform:translateY(0);}", "input,select,textarea{border-radius:8px !important;transition:border-color .15s,box-shadow .15s;}", "input:focus,select:focus,textarea:focus{outline:none !important;border-color:#EE1A42 !important;box-shadow:0 0 0 3px rgba(238,26,66,.12) !important;}", "table{border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(17,24,39,.06);}", "tbody tr{transition:background .12s;}", "tbody tr:hover{background:#f8f9fd !important;}", "::-webkit-scrollbar{width:9px;height:9px;}", "::-webkit-scrollbar-thumb{background:#c9cdd8;border-radius:6px;}", "::-webkit-scrollbar-thumb:hover{background:#aab0bf;}", "::-webkit-scrollbar-track{background:transparent;}", ".mi-shell{animation:miFade .25s ease;}", "@keyframes miFade{from{opacity:.6;transform:translateY(3px);}to{opacity:1;transform:none;}}"].join('\n');
+  css.textContent = [
+    "html,body{background:" + SURF1 + " !important;color:#fff;min-height:100vh;font-family:" + FONT + " !important;font-size:16px;color-scheme:dark;}",
+    "body,button,input,select,textarea{font-family:" + FONT + " !important;}",
+    "button{font-size:inherit;}",
+    "button:hover{filter:brightness(1.12);}",
+    "button:disabled,input:disabled,select:disabled,textarea:disabled{color:#fff !important;-webkit-text-fill-color:#fff;opacity:1;cursor:not-allowed;border-style:dashed !important;}",
+    "button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid " + ORANGE + " !important;outline-offset:1px;}",
+    "input,select,textarea{border-radius:4px !important;color:#fff;border:1px solid rgba(255,255,255,.25);}",
+    "input:not([type=checkbox]):not([type=radio]):not([type=file]),select,textarea{background:" + SURF3 + ";min-height:32px;}",
+    "input:focus,select:focus,textarea:focus{border-color:" + ORANGE + " !important;}",
+    "input::placeholder,textarea::placeholder{color:#fff;opacity:1;font-weight:400;}",
+    "input[type=checkbox],input[type=radio]{accent-color:" + ORANGE + ";}",
+    "select option{background:" + SURF2 + ";color:#fff;}",
+    "table{border-radius:8px;border-collapse:collapse;}",
+    "tbody tr:hover{background:" + SURF3 + " !important;}",
+    "a{color:" + BLUE + ";}",
+    "::selection{background:rgba(255,120,18,.45);color:#fff;}",
+    "::-webkit-scrollbar{width:10px;height:10px;}",
+    "::-webkit-scrollbar-thumb{background:#484848;border-radius:6px;}",
+    "::-webkit-scrollbar-thumb:hover{background:#5c5c5c;}",
+    "::-webkit-scrollbar-track{background:transparent;}",
+    ".pb-wordmark{font-style:italic !important;letter-spacing:0 !important;}",
+    ".mi-shell{animation:miFade .2s ease;}",
+    "@keyframes miFade{from{opacity:.7;}to{opacity:1;}}"
+  ].join('\n');
   document.head.appendChild(css);
+  var fl = document.createElement('link');
+  fl.rel = 'stylesheet';
+  fl.href = 'https://fonts.googleapis.com/css2?family=Carlito:wght@400;700&display=swap';
+  document.head.appendChild(fl);
 })();
+var pbh = React.createElement;
 const {
   useState,
   useEffect,
@@ -62,7 +253,8 @@ function snapToSunday(iso) {
   return localISO(d);
 }
 const SV = "5";
-const BUILD = "29 Sep 2026";
+const BUILD = "16 Nov 2026";
+const BUILD_TIME = "9:26pm AEDT";
 const fmt = s => s ? s.split('-').reverse().join('/') : '—';
 const fmtShort = s => s ? s.split('-').reverse().join('/').slice(0, 5) : '';
 const CATS = ["AFL", "NRL", "NFL", "NBA", "MLB", "Racing", "Foxcatcher/StatMate", "World Cup", "Other"];
@@ -4010,7 +4202,7 @@ var NAV_LOGOS = {
   seven: { src: 'data:image/png;base64,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', h: 22 },
 };
 var NAV_TABS = [
-  { k: 'library', label: 'Creative Library', icon: 'library' },
+  { k: 'library', label: 'Library', icon: 'library' },
   { k: 'foxfooty', label: 'Fox Footy', logo: 'fox' },
   { k: 'ussports', label: 'ESPN', logo: 'espn' },
   { k: 'rdcmi', label: 'RDC', logo: 'rdc' },
@@ -4024,11 +4216,11 @@ function navIcon(item, active) {
   var h = React.createElement;
   if (item.logo && NAV_LOGOS[item.logo]) {
     var l = NAV_LOGOS[item.logo];
-    return h('img', { src: l.src, alt: '', style: { height: l.h, width: 'auto', display: 'block', filter: active ? 'invert(1)' : 'none' } });
+    return h('img', { src: l.src, alt: '', style: { height: l.h, width: 'auto', display: 'block', filter: 'invert(1)' } });
   }
-  var c = active ? '#fff' : '#000';
-  return h('svg', { width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none', stroke: c, strokeWidth: 1.6, strokeLinecap: 'round', style: { display: 'block' } },
-    h('rect', { x: 2, y: 3.5, width: 12, height: 9.5, rx: 1.5 }), h('path', { d: 'M2 6.5h12M5.5 3.5l1 3M9 3.5l1 3' }));
+  var c = '#fff';
+  return h('svg', { width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none', stroke: c, strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', style: { display: 'block' } },
+    h('rect', { x: 3, y: 5, width: 18, height: 15, rx: 2 }), h('path', { d: 'M3 10h18M8 5l1.5 5M13 5l1.5 5' }));
 }
 
 function App() {
@@ -6332,81 +6524,25 @@ function App() {
       padding: '0 18px 24px',
       color: '#111827'
     }
-  }, /*#__PURE__*/React.createElement("div", {
+  }, pbh('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '12px 24px', margin: '0 -18px', padding: '16px 32px' } },
+    pbh('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px 14px' } },
+      pbh('span', { className: 'pb-wordmark', style: { fontSize: 21, fontWeight: 700, textTransform: 'uppercase', lineHeight: 1 } }, pbh('span', { style: { color: '#ed1b42' } }, 'Points'), 'bet'),
+      pbh('span', { 'aria-hidden': 'true', style: { width: 1, height: 20, background: 'rgba(255,255,255,.25)' } }),
+      pbh('span', { style: { fontSize: 21, fontWeight: 700, textTransform: 'uppercase', lineHeight: 1 } }, 'MI Planner'),
+      pbh('span', { style: { fontSize: 14, lineHeight: 1 } }, 'Material Instructions \u00b7 TV \u00b7 Radio \u00b7 Outdoor \u00b7 ', creatives.length, ' creatives')),
+    pbh('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 } },
+      flash && pbh('span', { style: { fontSize: 14, fontWeight: 700, padding: '8px 14px', backgroundColor: '#7ed321', color: '#0a0a0a', borderRadius: 4 } }, flash),
+      pbh('div', { title: 'Build date and time, confirms which version you are viewing', style: { display: 'flex', alignItems: 'center', gap: 10, height: 36, boxSizing: 'border-box', padding: '0 12px', border: '1px solid rgba(255,255,255,.25)', borderRadius: 4, fontSize: 14, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', lineHeight: 1, fontVariantNumeric: 'tabular-nums' } },
+        pbh('span', { style: { fontWeight: 400 } }, 'Build'), pbh('span', null, BUILD), pbh('span', { style: { fontWeight: 400 } }, BUILD_TIME)))), pbh("div", {
     style: {
       display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      margin: '0 -18px 18px',
-      padding: '16px 26px',
-      background: 'linear-gradient(90deg,#0c0e1a 0%,#171a2e 100%)',
-      borderBottom: '3px solid #EE1A42',
-      boxShadow: '0 4px 18px rgba(12,14,26,.25)'
-    }
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 19,
-      fontWeight: 800,
-      letterSpacing: '-0.4px',
-      color: '#fff'
-    }
-  }, "PointsBet ", /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: '#EE1A42'
-    }
-  }, "MI Planner"), " ", /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 10,
-      fontWeight: 800,
-      color: '#fff',
-      backgroundColor: '#EE1A42',
-      borderRadius: 5,
-      padding: '2px 7px',
-      verticalAlign: 'middle',
-      letterSpacing: '0.08em',
-      marginLeft: 4
-    }
-  }, "V2"), " ", /*#__PURE__*/React.createElement("span", {
-    title: "Build date \u2014 confirms which version you're viewing",
-    style: {
-      fontSize: 10,
-      fontWeight: 700,
-      color: '#9aa0b5',
-      backgroundColor: 'rgba(255,255,255,0.08)',
-      border: '1px solid rgba(255,255,255,0.15)',
-      borderRadius: 5,
-      padding: '2px 7px',
-      verticalAlign: 'middle',
-      letterSpacing: '0.03em',
-      marginLeft: 6
-    }
-  }, "build ", BUILD)), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: '#9aa0b5',
-      marginTop: 3
-    }
-  }, "Material Instructions · TV · Radio · Outdoor · ", creatives.length, " creatives")), flash && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12,
-      color: '#0c0e1a',
-      fontWeight: 700,
-      padding: '6px 14px',
-      backgroundColor: '#7CFC9B',
-      borderRadius: 20,
-      boxShadow: '0 2px 8px rgba(0,0,0,.25)'
-    }
-  }, flash)), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 6,
-      marginBottom: 18,
+      gap: 4,
       flexWrap: 'wrap',
       alignItems: 'center',
-      background: '#fff',
-      borderRadius: 14,
-      padding: '8px 10px',
-      boxShadow: '0 1px 4px rgba(17,24,39,.07)'
+      margin: '0 -18px 20px',
+      padding: '0 24px',
+      borderTop: '1px solid rgba(255,255,255,.12)',
+      borderBottom: '1px solid rgba(255,255,255,.12)'
     }
   }, NAV_TABS.filter(function (t) { return !t.hidden || tab === t.k; }).map(function (t) {
     var item = [t.k, t.label];
@@ -6416,20 +6552,29 @@ function App() {
         setTab(item[0]);
       },
       style: {
-        padding: '8px 15px',
-        border: 'none',
-        cursor: 'pointer',
-        fontWeight: tab === item[0] ? 700 : 500,
-        color: tab === item[0] ? '#fff' : '#4b5563',
-        background: tab === item[0] ? 'linear-gradient(90deg,#EE1A42,#c8123a)' : 'transparent',
-        borderRadius: 9,
-        fontSize: 13,
-        boxShadow: tab === item[0] ? '0 3px 10px rgba(238,26,66,.30)' : 'none',
-        display: 'inline-flex',
+        display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
-        gap: 7
+        justifyContent: 'center',
+        gap: 8,
+        minWidth: 104,
+        height: 64,
+        boxSizing: 'border-box',
+        padding: '0 14px',
+        background: 'none',
+        border: 0,
+        borderBottom: tab === item[0] ? '2px solid #ed1b42' : '2px solid transparent',
+        borderRadius: 0,
+        color: '#fff',
+        fontWeight: tab === item[0] ? 700 : 400,
+        fontSize: 13,
+        textTransform: 'uppercase',
+        letterSpacing: '0.5px',
+        lineHeight: 1,
+        whiteSpace: 'nowrap',
+        cursor: 'pointer'
       }
-    }, navIcon(t, tab === item[0]), item[1]);
+    }, pbh('span', { style: { display: 'flex', alignItems: 'center', height: 24 } }, navIcon(t, tab === item[0])), pbh('span', null, item[1]));
   }), /*#__PURE__*/React.createElement("span", {
     style: {
       marginLeft: 'auto',
