@@ -3455,9 +3455,9 @@ var SEN_PLAN = {
     { id: 'bmad', name: 'BMAD', when: 'Fri–Sun', stations: 'SEN Track 1593, RSN 927',
       ents: [{ id: 'bmad_spots', name: 'Recorded commercials', len: '15s', type: 'spots', dur: '15', qty: senEvery(3) }] },
     { id: 'upd_mt', name: 'PointsBet Update', when: 'Mon–Thu 9am–12pm', stations: 'SEN 1116 Melbourne',
-      ents: [{ id: 'upd_mt', name: 'Pre-recorded PointsBet Update', len: '60s', type: 'update', qty: { 0: 2, 1: 2, 2: 2, 3: 2 } }] },
+      ents: [{ id: 'upd_mt', name: 'Pre-recorded PointsBet Update', len: '60s', type: 'update', dur: '60', qty: { 0: 2, 1: 2, 2: 2, 3: 2 } }] },
     { id: 'upd_fri', name: 'PointsBet Update', when: 'Friday 9–10am', stations: 'SEN 1116 Melbourne',
-      ents: [{ id: 'upd_fri', name: 'Pre-recorded or live PointsBet Update', len: '60s', type: 'update', qty: senEvery(1) }] },
+      ents: [{ id: 'upd_fri', name: 'Pre-recorded or live PointsBet Update', len: '60s', type: 'update', dur: '60', qty: senEvery(1) }] },
     { id: 'digital', name: 'Digital', when: 'Weekly', stations: 'SEN Instagram',
       ents: [{ id: 'insta', name: 'Instagram story share', len: 'Story', type: 'note', qty: senEvery(1) }] },
     { id: 'sportsday', name: 'SportsDay VIC', when: 'Monday 5:30–7:30pm', stations: 'SEN 1116 Melbourne',
@@ -3487,18 +3487,42 @@ function senRunning(wk) {
   return out;
 }
 function senWords(t) { return String(t || '').trim() ? String(t).trim().split(/\s+/).length : 0; }
-function senHasMaterial(ent, m) {
+// Keys are tied to the Creative Library: a pick stores the creative's id (older picks stored the key
+// number, which is matched once). A pick only counts if the creative is still in the Library, ticked for
+// SEN, the right length for the slot and on air that week.
+function senCreative(creatives, x) {
+  if (!x) return null;
+  var list = creatives || [];
+  if (x.id != null && x.id !== '') return list.find(function (c) { return String(c.id) === String(x.id); }) || null;
+  var k = String(x.k || '').trim().toUpperCase();
+  return k ? list.find(function (c) { return String(c.keyNumber || '').trim().toUpperCase() === k; }) || null : null;
+}
+function senProblem(c, ent, wk) {
+  if (!c) return 'not in the Creative Library';
+  if (!(c.nets && c.nets.sen)) return 'not ticked for SEN in the Library';
+  if (ent.dur && String(c.dur) !== String(ent.dur)) return 'is a :' + c.dur + ', this slot is :' + ent.dur;
+  var end = senAddDays(wk, 6);
+  if (c.air && c.air > end) return 'not on air until ' + c.air.split('-').reverse().join('/');
+  if (c.end && c.end < wk) return 'expired ' + c.end.split('-').reverse().join('/');
+  return '';
+}
+function senPicks(m) { return ((m || {}).keys || []).filter(function (x) { return (x.id != null && x.id !== '') || String(x.k || '').trim(); }); }
+function senHasMaterial(ent, m, wk, creatives) {
   if (!m) return false;
-  if (ent.type === 'spots') return (m.keys || []).some(function (k) { return String(k.k || '').trim(); });
-  if (ent.type === 'update') return m.mode === 'live' ? !!String(m.text || '').trim() : (m.keys || []).some(function (k) { return String(k.k || '').trim(); });
+  var keyed = ent.type === 'spots' || (ent.type === 'update' && m.mode !== 'live');
+  if (keyed) {
+    var picks = senPicks(m);
+    if (!creatives) return picks.length > 0;
+    return picks.length > 0 && picks.every(function (x) { return !senProblem(senCreative(creatives, x), ent, wk); });
+  }
   return !!String(m.text || '').trim();
 }
 // Week status for the season strip: 'none' (nothing to supply), 'todo', 'part' or 'done'.
-function senStatus(sen, wk) {
+function senStatus(sen, wk, creatives) {
   var run = senRunning(wk).filter(function (r) { return r.ent.type !== 'info'; });
   if (!run.length) return 'none';
   var mat = (((sen || {}).weeks || {})[wk] || {}).mat || {};
-  var have = run.filter(function (r) { return senHasMaterial(r.ent, mat[r.ent.id]); }).length;
+  var have = run.filter(function (r) { return senHasMaterial(r.ent, mat[r.ent.id], wk, creatives); }).length;
   return have === 0 ? 'todo' : have === run.length ? 'done' : 'part';
 }
 // A week with nothing entered starts from the most recent earlier week.
@@ -3512,17 +3536,16 @@ function senCarry(sen, wk) {
 }
 
 function senFmt(iso, yr) { if (!iso) return ''; var p = iso.split('-'); return p[2] + '/' + p[1] + (yr ? '/' + p[0] : ''); }
-function senKeyTitle(creatives, k) {
-  var c = (creatives || []).find(function (x) { return String(x.keyNumber || '').trim().toUpperCase() === String(k || '').trim().toUpperCase(); });
-  return c ? c.title : '';
-}
-function senShares(keys) {
-  var ks = (keys || []).filter(function (x) { return String(x.k || '').trim(); });
-  if (ks.length <= 1) return ks.map(function (x) { return { k: x.k.trim(), s: 100 }; });
-  var rot = {};
-  ks.forEach(function (x) { rot[x.k.trim()] = (rot[x.k.trim()] || 0) + (parseFloat(x.s) || 0); });
-  var r = usRound5(rot, function (k) { return k; });
-  return Object.keys(r).map(function (k) { return { k: k, s: parseFloat(r[k]) }; });
+// Picks with their Library creative and share (rounded to 5, adding to 100).
+function senShares(m, creatives) {
+  var picks = senPicks(m), byKey = {}, rot = {};
+  picks.forEach(function (x) {
+    var c = senCreative(creatives, x), key = c ? 'id' + c.id : 'k' + String(x.k || x.id);
+    if (!byKey[key]) byKey[key] = { c: c, x: x };
+    rot[key] = (rot[key] || 0) + (picks.length > 1 ? (parseFloat(x.s) || 0) : 100);
+  });
+  var r = Object.keys(rot).length > 1 ? usRound5(rot, function (k) { return k; }) : rot;
+  return Object.keys(r).map(function (k) { return { c: byKey[k].c, x: byKey[k].x, s: parseFloat(r[k]) }; });
 }
 
 // SEN MI for one week: every entitlement running, with its key(s) and share or the wording to read.
@@ -3534,7 +3557,7 @@ function senExport(sen, wk, creatives, XLSX, zap) {
     var INK = '1F2937', MID = '4B5563', PAPER = 'F3F4F6', LINE = 'D1D5DB';
     var thin = { style: 'thin', color: { rgb: LINE } }, box = { top: thin, bottom: thin, left: thin, right: thin };
     var i = senWeekIndex(wk), wkData = ((sen || {}).weeks || {})[wk] || {}, mat = wkData.mat || {};
-    var rows = [], merges = [], missing = [];
+    var rows = [], merges = [], missing = [], problems = [];
     var T = function (v, o) { return Object.assign({ v: v }, o || {}); };
     rows.push([T('SEN Material Instructions ' + String.fromCharCode(8212) + ' WC ' + senFmt(wk, true) + ' (NFL ' + senGameLabel(i) + ')', { b: true })]);
     rows.push([T(SEN_PLAN.title + ' · Mon ' + senFmt(wk) + ' – Sun ' + senFmt(senAddDays(wk, 6)))]);
@@ -3544,9 +3567,10 @@ function senExport(sen, wk, creatives, XLSX, zap) {
     run.forEach(function (r) {
       var e = r.ent, m = mat[e.id] || {}, lines = [];
       if (e.type === 'spots' || (e.type === 'update' && m.mode !== 'live')) {
-        senShares(m.keys).forEach(function (x) {
-          var t = senKeyTitle(creatives, x.k);
-          lines.push([T(x.k + (t ? ' (' + t + ')' : ''), { b: true, box: true, wrap: true }), T(x.s + '%', { b: true, box: true, align: 'center' })]);
+        senShares(m, creatives).forEach(function (p) {
+          var prob = senProblem(p.c, e, wk), label = p.c ? p.c.keyNumber + ' (' + p.c.title + ')' : String(p.x.k || 'Unknown key');
+          if (prob) problems.push(label + ' ' + prob);
+          lines.push([T(label + (prob ? ' – ' + prob : ''), { b: true, box: true, wrap: true, color: prob ? 'C00000' : undefined }), T(p.s + '%', { b: true, box: true, align: 'center' })]);
         });
       } else if (e.type === 'update') {
         if (String(m.text || '').trim()) lines.push([T('Live read: ' + m.text.trim(), { box: true, wrap: true }), T('', { box: true })]);
@@ -3588,7 +3612,10 @@ function senExport(sen, wk, creatives, XLSX, zap) {
     var a2 = document.createElement('a'); a2.href = url; a2.download = name;
     document.body.appendChild(a2); a2.click(); document.body.removeChild(a2);
     setTimeout(function () { URL.revokeObjectURL(url); }, 150);
-    zap(missing.length ? '✓ SEN MI exported · ⚠ still TBC: ' + missing.join('; ') : '✓ SEN MI exported');
+    var warn = [];
+    if (missing.length) warn.push('still TBC: ' + missing.join('; '));
+    if (problems.length) warn.push('check: ' + problems.join('; '));
+    zap(warn.length ? '✓ SEN MI exported · ⚠ ' + warn.join(' · ') : '✓ SEN MI exported');
   } catch (e) { zap('⚠ Export failed: ' + (e && e.message ? e.message : e)); }
 }
 
@@ -3608,27 +3635,47 @@ function SENTab(props) {
   var link = { border: 'none', background: 'none', color: '#2563eb', fontSize: 11, cursor: 'pointer', padding: '2px 0' };
   var idx = senWeekIndex(wk), run = senRunning(wk);
   var wkData = (sen.weeks || {})[wk] || {}, mat = wkData.mat || {};
-  var senKeys = creatives.filter(function (c) { return c.nets && c.nets.sen; });
 
   function upd(fn) { setSen(function (p) { var n = JSON.parse(JSON.stringify(p || { weeks: {} })); n.weeks = n.weeks || {}; n.weeks[wk] = n.weeks[wk] || { mat: {}, note: '' }; n.weeks[wk].mat = n.weeks[wk].mat || {}; fn(n.weeks[wk]); return n; }); }
   function setMat(id, m) { upd(function (w) { w.mat[id] = m; }); }
   function evenSplit(n) { var out = [], base = Math.floor(100 / n / 5) * 5; for (var i = 0; i < n; i++) out.push(base); out[0] += 100 - base * n; return out; }
 
-  function keysEditor(m, onChange) {
-    var list = m.keys && m.keys.length ? m.keys : [{ k: '', s: 100 }];
+  // Choices for a slot: Library creatives ticked for SEN, the slot's length and on air during the week.
+  function eligible(ent) {
+    return creatives.filter(function (c) { return !senProblem(c, ent, wk); })
+      .sort(function (a, b) { return String(a.keyNumber).localeCompare(String(b.keyNumber)); });
+  }
+  function keysEditor(ent, m, onChange) {
+    var opts = eligible(ent);
+    var list = m.keys && m.keys.length ? m.keys : [{ id: '', s: 100 }];
     var total = list.reduce(function (s, x) { return s + (parseFloat(x.s) || 0); }, 0);
+    var wkEnd = senAddDays(wk, 6);
+    if (!opts.length && !senPicks(m).length) {
+      return h('div', { style: { fontSize: 12, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '8px 10px' } },
+        'No :' + ent.dur + ' creatives ticked for SEN are on air this week. ',
+        props.setTab ? h('button', { style: Object.assign({}, link, { fontSize: 12 }), onClick: function () { props.setTab('library'); } }, 'Open the Creative Library') : null);
+    }
     return h('div', null,
       list.map(function (x, i) {
-        var title = senKeyTitle(creatives, x.k);
+        var c = senCreative(creatives, x), prob = (x.id || x.k) ? senProblem(c, ent, wk) : '';
+        var val = c ? String(c.id) : '';
+        var choices = opts.slice();
+        if (c && choices.indexOf(c) < 0) choices.unshift(c);
         return h('div', { key: i, style: { display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4, flexWrap: 'wrap' } },
-          h('input', { list: 'sen-keys', value: x.k, placeholder: 'key number', onChange: function (e) { var l = JSON.parse(JSON.stringify(list)); l[i].k = e.target.value; onChange(Object.assign({}, m, { keys: l })); }, style: Object.assign({}, inp, { width: 170, fontFamily: 'ui-monospace,Menlo,monospace' }) }),
+          h('select', { value: val, onChange: function (e) { var l = JSON.parse(JSON.stringify(list)); l[i] = { id: e.target.value, s: l[i].s }; onChange(Object.assign({}, m, { keys: l })); },
+            style: Object.assign({}, inp, { minWidth: 300, maxWidth: 420, borderColor: prob ? '#fca5a5' : '#d1d5db' }) },
+            [h('option', { key: '', value: '' }, 'Choose a :' + ent.dur + ' SEN creative')].concat(choices.map(function (o) {
+              var p = senProblem(o, ent, wk);
+              return h('option', { key: o.id, value: String(o.id) }, (p ? '⚠ ' : '') + o.keyNumber + ' · ' + o.title);
+            }))),
           list.length > 1 ? h('input', { type: 'number', min: 0, max: 100, step: 5, value: x.s, onChange: function (e) { var l = JSON.parse(JSON.stringify(list)); l[i].s = e.target.value === '' ? '' : Number(e.target.value); onChange(Object.assign({}, m, { keys: l })); }, style: Object.assign({}, inp, { width: 50 }) }) : null,
           list.length > 1 ? h('span', { style: { fontSize: 11, color: '#6b7280' } }, '%') : null,
-          h('span', { style: { fontSize: 11, color: title ? '#374151' : '#9ca3af' } }, title || (x.k ? 'not in the Creative Library' : '')),
+          prob ? h('span', { style: { fontSize: 11, color: '#b91c1c', fontWeight: 700 } }, (c ? '' : String(x.k || 'This key') + ' ') + prob)
+            : c && c.end && c.end < wkEnd ? h('span', { style: { fontSize: 11, color: '#92400e' } }, 'ends ' + senFmt(c.end)) : null,
           list.length > 1 ? h('button', { style: Object.assign({}, link, { color: '#9ca3af' }), onClick: function () { var l = list.filter(function (_, j) { return j !== i; }); if (l.length === 1) l[0].s = 100; onChange(Object.assign({}, m, { keys: l })); } }, '×') : null);
       }),
       h('div', { style: { display: 'flex', gap: 10, alignItems: 'center' } },
-        h('button', { style: link, onClick: function () { var l = JSON.parse(JSON.stringify(list)).concat([{ k: '', s: 0 }]); var sp = evenSplit(l.length); l.forEach(function (y, j) { y.s = sp[j]; }); onChange(Object.assign({}, m, { keys: l })); } }, '+ add key'),
+        h('button', { style: link, onClick: function () { var l = JSON.parse(JSON.stringify(list)).concat([{ id: '', s: 0 }]); var sp = evenSplit(l.length); l.forEach(function (y, j) { y.s = sp[j]; }); onChange(Object.assign({}, m, { keys: l })); } }, '+ add creative'),
         list.length > 1 && total !== 100 ? h('span', { style: { fontSize: 11, color: '#b91c1c', fontWeight: 700 } }, total + '%') : null));
   }
   function textEditor(m, onChange, placeholder, limit) {
@@ -3639,7 +3686,7 @@ function SENTab(props) {
   }
   function editor(r) {
     var e = r.ent, m = mat[e.id] || {}, set = function (v) { setMat(e.id, v); };
-    if (e.type === 'spots') return keysEditor(m, set);
+    if (e.type === 'spots') return keysEditor(e, m, set);
     if (e.type === 'words') return textEditor(m, set, 'Wording to read, ' + e.limit + ' words max', e.limit);
     if (e.type === 'brief') return textEditor(m, set, 'Topic or brief for the segment');
     if (e.type === 'note') return h('input', { value: m.text || '', placeholder: 'Post or asset to share', onChange: function (ev) { set(Object.assign({}, m, { text: ev.target.value })); }, style: Object.assign({}, inp, { width: '100%', boxSizing: 'border-box' }) });
@@ -3650,7 +3697,7 @@ function SENTab(props) {
           var on = mode === o[0];
           return h('button', { key: o[0], onClick: function () { set(Object.assign({}, m, { mode: o[0] })); }, style: { border: '1px solid ' + (on ? '#111827' : '#d1d5db'), background: on ? '#111827' : '#fff', color: on ? '#fff' : '#374151', borderRadius: 14, padding: '3px 10px', fontSize: 11, fontWeight: 700, cursor: 'pointer' } }, o[1]);
         })),
-        mode === 'pre' ? keysEditor(m, set) : textEditor(m, set, 'Script or talking points for the live read'));
+        mode === 'pre' ? keysEditor(e, m, set) : textEditor(m, set, 'Script or talking points for the live read'));
     }
     return h('span', { style: { fontSize: 12, color: '#6b7280' } }, 'Nothing to supply');
   }
@@ -3672,14 +3719,13 @@ function SENTab(props) {
     h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 8 } }, h('span', { style: lab }, 'Season'),
       h('span', { style: { fontSize: 11, color: '#6b7280' } }, 'Green: all material in. Amber: some missing. Click a week to open it.')),
     h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap' } }, SEN_GAME_WEEKS.map(function (g, i) {
-      var w = senWeekISO(i), st = senStatus(sen, w), f = fills[st], sel = w === wk, past = senAddDays(w, 6) < todayISO;
+      var w = senWeekISO(i), st = senStatus(sen, w, creatives), f = fills[st], sel = w === wk, past = senAddDays(w, 6) < todayISO;
       return h('button', { key: w, onClick: function () { setWk(w); }, title: senGameLabel(i) + ' · wc ' + senFmt(w, true),
         style: { width: 44, padding: '4px 0', borderRadius: 7, cursor: 'pointer', border: sel ? '2px solid #EE1A42' : '1px solid #e5e7eb', background: f[0], color: f[1], opacity: past && !sel ? 0.55 : 1, lineHeight: 1.2 } },
         h('div', { style: { fontSize: 12, fontWeight: 800 } }, g || '–'), h('div', { style: { fontSize: 9 } }, senFmt(w)));
     })));
 
   // this week's entitlements
-  var dl = h('datalist', { id: 'sen-keys' }, senKeys.map(function (c) { return h('option', { key: c.id, value: c.keyNumber }, c.title); }));
   var body;
   if (!run.length) {
     body = h('div', { style: Object.assign({}, card, { textAlign: 'center', color: '#6b7280', fontSize: 13, padding: '30px 20px' }) },
@@ -3687,14 +3733,14 @@ function SENTab(props) {
   } else {
     var progs = [];
     run.forEach(function (r) { var g = progs.find(function (x) { return x.prog.id === r.prog.id; }); if (g) g.rows.push(r); else progs.push({ prog: r.prog, rows: [r] }); });
-    body = h('div', null, dl, progs.map(function (g) {
+    body = h('div', null, progs.map(function (g) {
       return h('div', { key: g.prog.id, style: card },
         h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 8 } },
           h('span', { style: { fontSize: 14, fontWeight: 800, color: '#111827' } }, g.prog.name),
           h('span', { style: { fontSize: 12, color: '#374151' } }, g.prog.when),
           g.prog.stations ? h('span', { style: { fontSize: 11, color: '#9ca3af' } }, g.prog.stations) : null),
         g.rows.map(function (r) {
-          var ok = r.ent.type === 'info' || senHasMaterial(r.ent, mat[r.ent.id]);
+          var ok = r.ent.type === 'info' || senHasMaterial(r.ent, mat[r.ent.id], wk, creatives);
           return h('div', { key: r.ent.id, style: { display: 'flex', gap: 16, padding: '8px 0', borderTop: '1px solid #f1f5f9', alignItems: 'flex-start', flexWrap: 'wrap' } },
             h('div', { style: { width: 260, flex: '0 0 260px' } },
               h('div', { style: { fontSize: 13, fontWeight: 700, color: '#111827' } }, r.ent.name),
@@ -6196,7 +6242,7 @@ function App() {
     usCopyBucket: usCopyBucket, usCopyDay: usCopyDay, usCopySection: usCopySection,
     usCreativesFor: usCreativesFor, exportUsXLSX: exportUsXLSX
   }), tab === 'sen' && /*#__PURE__*/React.createElement(SENTab, {
-    sen: sen, setSen: setSen, creatives: creatives, zap: zap, getXLSX: getXLSX
+    sen: sen, setSen: setSen, creatives: creatives, zap: zap, getXLSX: getXLSX, setTab: setTab
   }), tab === 'outdoor' && /*#__PURE__*/React.createElement(LargeFormat, {
     camps: lfCamps, setCamps: setLfCamps, zap: zap, getXLSX: getXLSX
   }), tab === 'seven' && /*#__PURE__*/React.createElement(SevenEleven, {
